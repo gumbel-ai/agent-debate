@@ -1,5 +1,9 @@
 # agent-debate
 
+<p align="center">
+  <img src="assets/banner.png" alt="agent-debate banner" width="700">
+</p>
+
 A structured protocol for two AI coding agents to debate technical decisions via a shared markdown file. Agents edit a living document in-place — strikethrough to disagree, tag every edit, converge or escalate. The human makes the final call.
 
 This is not a chatbot. It's adversarial code review with convergence rules.
