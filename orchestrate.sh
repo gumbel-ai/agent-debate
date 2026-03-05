@@ -2,8 +2,9 @@
 # orchestrate.sh — Runs an agent debate via shared markdown file
 #
 # Usage:
-#   ./tools/debate/orchestrate.sh --topic "question" --rounds 3
-#   ./tools/debate/orchestrate.sh --resume path/to/debate.md --rounds 2
+#   ./orchestrate.sh --topic "question" --rounds 3
+#   ./orchestrate.sh --topic "question" --agents opus,codex,sonnet --rounds 2
+#   ./orchestrate.sh --resume path/to/debate.md --rounds 2
 
 set -euo pipefail
 
@@ -20,6 +21,21 @@ RESUME_FILE=""
 CONSTRAINTS=""
 AGENT_1="Claude"
 AGENT_2="Codex"
+AGENT1_OVERRIDE_NAME=""
+AGENT2_OVERRIDE_NAME=""
+CONFIG_FILE=""
+AGENTS_SPEC=""
+RUNTIME_CONFIG_FILE=""
+AGENT_COUNT=0
+declare -a AGENT_NAMES=()
+
+cleanup() {
+  if [[ -n "${RUNTIME_CONFIG_FILE:-}" && -f "${RUNTIME_CONFIG_FILE:-}" ]]; then
+    rm -f "$RUNTIME_CONFIG_FILE"
+  fi
+}
+
+trap cleanup EXIT
 
 usage() {
   cat <<EOF
@@ -29,9 +45,11 @@ Start a new debate:
   --topic "question"          The debate topic (required for new debates)
   --files file1 file2 ...     Relevant source files to include as context
   --constraints "text"        Non-negotiable constraints
+  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini:gemini-2.5-pro,codex,sonnet)
+  --config path/to/config.json  Agent configuration file (optional)
   --rounds N                  Max rounds per agent (default: 3)
-  --agent1 name               First agent name (default: Claude)
-  --agent2 name               Second agent name (default: Codex)
+  --agent1 name               Override Agent 1 display name
+  --agent2 name               Override Agent 2 display name
 
 Resume an existing debate:
   --resume path/to/debate.md  Path to existing debate file
@@ -47,10 +65,12 @@ while [[ $# -gt 0 ]]; do
     --topic) TOPIC="$2"; shift 2 ;;
     --files) shift; FILES=""; while [[ $# -gt 0 && ! "$1" =~ ^-- ]]; do FILES="$FILES $1"; shift; done ;;
     --constraints) CONSTRAINTS="$2"; shift 2 ;;
+    --agents) AGENTS_SPEC="$2"; shift 2 ;;
+    --config) CONFIG_FILE="$2"; shift 2 ;;
     --rounds) MAX_ROUNDS="$2"; shift 2 ;;
     --resume) RESUME_FILE="$2"; shift 2 ;;
-    --agent1) AGENT_1="$2"; shift 2 ;;
-    --agent2) AGENT_2="$2"; shift 2 ;;
+    --agent1) AGENT1_OVERRIDE_NAME="$2"; shift 2 ;;
+    --agent2) AGENT2_OVERRIDE_NAME="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
@@ -60,6 +80,246 @@ done
 if [[ -z "$RESUME_FILE" && -z "$TOPIC" ]]; then
   echo "Error: --topic is required for new debates (or use --resume)"
   usage
+fi
+
+resolve_config() {
+  if [[ -n "$CONFIG_FILE" ]]; then
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+      echo "Error: config file not found: $CONFIG_FILE"
+      exit 1
+    fi
+    return
+  fi
+
+  if [[ -f "./debate.config.json" ]]; then
+    CONFIG_FILE="./debate.config.json"
+  elif [[ -f "$HOME/.agent-debate/config.json" ]]; then
+    CONFIG_FILE="$HOME/.agent-debate/config.json"
+  else
+    CONFIG_FILE=""
+  fi
+}
+
+resolve_agents() {
+  RUNTIME_CONFIG_FILE=$(mktemp)
+
+  local resolution_output
+  if ! resolution_output=$(python3 - "$CONFIG_FILE" "$AGENTS_SPEC" "$RUNTIME_CONFIG_FILE" <<'PY'
+import json
+import sys
+
+config_path = sys.argv[1]
+agents_spec = sys.argv[2].strip()
+out_path = sys.argv[3]
+
+BUILTIN_ALIASES = {
+    "opus": {
+        "name": "Opus 4.6",
+        "command_template": ["claude", "-p", "--model", "claude-opus-4-6"],
+        "prompt_transport": "arg",
+    },
+    "sonnet": {
+        "name": "Sonnet 4.6",
+        "command_template": ["claude", "-p", "--model", "claude-sonnet-4-6"],
+        "prompt_transport": "arg",
+    },
+    "codex": {
+        "name": "Codex",
+        "command_template": ["codex", "-q"],
+        "prompt_transport": "arg",
+    },
+    "gemini": {
+        "name": "Gemini 2.5 Pro",
+        "command_template": ["gemini", "--model", "{MODEL}"],
+        "default_model": "gemini-2.5-pro",
+        "prompt_transport": "stdin",
+    },
+}
+
+BUILTIN_DEBATE = {
+    "default_agents": ["opus", "codex"],
+    "min_agents": 2,
+    "max_agents": 3,
+}
+
+def fail(msg: str) -> None:
+    print(f"Error: {msg}", file=sys.stderr)
+    raise SystemExit(1)
+
+if config_path:
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            cfg = json.load(f)
+    except json.JSONDecodeError as e:
+        fail(f"invalid JSON in config ({config_path}): {e}")
+
+    aliases = cfg.get("aliases")
+    debate = cfg.get("debate")
+    if not isinstance(aliases, dict) or not aliases:
+        fail("config.aliases must be a non-empty object")
+    if not isinstance(debate, dict):
+        fail("config.debate must be an object")
+
+    default_agents = debate.get("default_agents")
+    min_agents = debate.get("min_agents", 2)
+    max_agents = debate.get("max_agents", 3)
+else:
+    aliases = BUILTIN_ALIASES
+    default_agents = BUILTIN_DEBATE["default_agents"]
+    min_agents = BUILTIN_DEBATE["min_agents"]
+    max_agents = BUILTIN_DEBATE["max_agents"]
+
+if not isinstance(default_agents, list) or not default_agents:
+    fail("debate.default_agents must be a non-empty array")
+if not isinstance(min_agents, int) or not isinstance(max_agents, int) or min_agents > max_agents:
+    fail("debate.min_agents/max_agents must be valid integers with min_agents <= max_agents")
+
+if agents_spec:
+    requested = [tok.strip() for tok in agents_spec.split(",") if tok.strip()]
+else:
+    requested = list(default_agents)
+
+if len(requested) < min_agents or len(requested) > max_agents:
+    fail(f"agent count must be between {min_agents} and {max_agents}, got {len(requested)}")
+
+resolved = []
+unique_participants = set()
+
+for token in requested:
+    if ":" in token:
+        alias_raw, model_override = token.split(":", 1)
+        model_override = model_override.strip()
+    else:
+        alias_raw, model_override = token, ""
+
+    alias = alias_raw.strip().lower()
+    if alias not in aliases:
+        available = ", ".join(sorted(aliases.keys()))
+        fail(f"unknown alias '{alias}'. Available: {available}")
+
+    spec = aliases[alias]
+    if not isinstance(spec, dict):
+        fail(f"alias '{alias}' must be an object")
+
+    name = spec.get("name")
+    if not isinstance(name, str) or not name.strip():
+        fail(f"alias '{alias}' has invalid name")
+
+    template = spec.get("command_template")
+    if not isinstance(template, list) or not template or not all(isinstance(x, str) and x for x in template):
+        fail(f"alias '{alias}' command_template must be a non-empty array of strings")
+
+    transport = spec.get("prompt_transport", "arg")
+    if transport not in ("arg", "stdin"):
+        fail(f"alias '{alias}' prompt_transport must be 'arg' or 'stdin'")
+
+    has_model_placeholder = any("{MODEL}" in part for part in template)
+    if model_override and not has_model_placeholder:
+        fail(f"alias '{alias}' does not support model overrides")
+
+    model_value = model_override or spec.get("default_model", "")
+    cmd = []
+    for part in template:
+        if "{MODEL}" in part:
+            if not model_value:
+                fail(f"alias '{alias}' requires a model override or default_model")
+            cmd.append(part.replace("{MODEL}", model_value))
+        else:
+            cmd.append(part)
+
+    participant_key = (alias, model_value if has_model_placeholder else "")
+    unique_participants.add(participant_key)
+
+    resolved.append(
+        {
+            "name": name.strip(),
+            "command": cmd,
+            "prompt_transport": transport,
+        }
+    )
+
+if len(unique_participants) < 2:
+    fail("need at least two unique participants")
+
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump({"agents": resolved}, f)
+
+print(len(resolved))
+for agent in resolved:
+    print(agent["name"])
+PY
+  ); then
+    exit 1
+  fi
+
+  local resolved_lines=()
+  local line
+  while IFS= read -r line; do
+    resolved_lines+=("$line")
+  done <<< "$resolution_output"
+
+  if [[ ${#resolved_lines[@]} -lt 2 ]]; then
+    echo "Error: failed to resolve agent config"
+    exit 1
+  fi
+
+  AGENT_COUNT="${resolved_lines[0]}"
+  AGENT_NAMES=()
+  local i
+  for (( i=1; i<${#resolved_lines[@]}; i++ )); do
+    AGENT_NAMES+=("${resolved_lines[$i]}")
+  done
+
+  if [[ "${#AGENT_NAMES[@]}" -ne "$AGENT_COUNT" ]]; then
+    echo "Error: resolved agent count mismatch"
+    exit 1
+  fi
+
+  AGENT_1="${AGENT_NAMES[0]}"
+  AGENT_2="${AGENT_NAMES[1]}"
+}
+
+guardrails_support_three_agents() {
+  grep -q "{OTHER_AGENTS}" "$GUARDRAILS" && grep -q "\[A3-R1\]" "$GUARDRAILS"
+}
+
+escape_for_sed() {
+  printf '%s' "$1" | sed -e 's/[\/&|]/\\&/g'
+}
+
+has_open_disputes() {
+  grep -Eq '^\|.*\|[[:space:]]*OPEN[[:space:]]*\|[[:space:]]*$' "$DEBATE_FILE"
+}
+
+is_converged() {
+  grep -q "STATUS: CONVERGED" "$DEBATE_FILE" && ! has_open_disputes
+}
+
+agent_list_text() {
+  local joined="${AGENT_NAMES[0]}"
+  local idx
+  for (( idx=1; idx<AGENT_COUNT; idx++ )); do
+    joined="${joined}, ${AGENT_NAMES[$idx]}"
+  done
+  printf '%s' "$joined"
+}
+
+resolve_config
+resolve_agents
+
+if [[ -n "$AGENT1_OVERRIDE_NAME" ]]; then
+  AGENT_NAMES[0]="$AGENT1_OVERRIDE_NAME"
+fi
+if [[ -n "$AGENT2_OVERRIDE_NAME" ]]; then
+  AGENT_NAMES[1]="$AGENT2_OVERRIDE_NAME"
+fi
+
+AGENT_1="${AGENT_NAMES[0]}"
+AGENT_2="${AGENT_NAMES[1]}"
+
+if [[ "$AGENT_COUNT" -eq 3 ]] && ! guardrails_support_three_agents; then
+  echo "Error: 3-agent debate requires guardrails v2"
+  exit 1
 fi
 
 # --- Create or resume debate file ---
@@ -72,8 +332,9 @@ if [[ -n "$RESUME_FILE" ]]; then
   fi
   echo "Resuming debate: $DEBATE_FILE"
   # Detect current round from file
-  CURRENT_ROUND=$(grep -c '^\| R[0-9]' "$DEBATE_FILE" 2>/dev/null || echo "0")
-  CURRENT_ROUND=$(( (CURRENT_ROUND / 2) + 1 ))
+  CURRENT_ROUND=$(grep -Ec '^\|[[:space:]]*R[0-9]+[[:space:]]*\|' "$DEBATE_FILE" 2>/dev/null || true)
+  [[ -z "$CURRENT_ROUND" ]] && CURRENT_ROUND=0
+  CURRENT_ROUND=$(( (CURRENT_ROUND / AGENT_COUNT) + 1 ))
 else
   mkdir -p "$DEBATES_DIR"
   # Auto-increment debate number from existing files
@@ -119,17 +380,35 @@ GUARDRAILS_TEXT=$(cat "$GUARDRAILS")
 # --- Debate loop ---
 
 invoke_agent() {
-  local agent_name="$1"
-  local other_name="$2"
-  local round="$3"
+  local agent_idx="$1"
+  local round="$2"
+  local agent_name="${AGENT_NAMES[$((agent_idx - 1))]}"
+  local other_names=""
+  local idx
+
+  for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+    if [[ "$idx" -eq "$agent_idx" ]]; then
+      continue
+    fi
+    if [[ -z "$other_names" ]]; then
+      other_names="${AGENT_NAMES[$((idx - 1))]}"
+    else
+      other_names="${other_names}, ${AGENT_NAMES[$((idx - 1))]}"
+    fi
+  done
+
   local debate_content
   debate_content=$(cat "$DEBATE_FILE")
 
   # Build prompt: guardrails (with substitutions) + debate file
   local prompt
+  local agent_name_esc other_names_esc
+  agent_name_esc=$(escape_for_sed "$agent_name")
+  other_names_esc=$(escape_for_sed "$other_names")
   prompt=$(echo "$GUARDRAILS_TEXT" | \
-    sed -e "s|{AGENT_NAME}|$agent_name|g" \
-        -e "s|{OTHER_AGENT}|$other_name|g" \
+    sed -e "s|{AGENT_NAME}|$agent_name_esc|g" \
+        -e "s|{OTHER_AGENT}|$other_names_esc|g" \
+        -e "s|{OTHER_AGENTS}|$other_names_esc|g" \
         -e "s|{ROUND}|$round|g" \
         -e "s|{MAX_ROUNDS}|$MAX_ROUNDS|g")
 
@@ -144,19 +423,59 @@ Return ONLY the updated debate file content (the full file, with your edits appl
 
 $debate_content"
 
-  local response=""
+  local prompt_file
+  prompt_file=$(mktemp)
+  printf '%s' "$prompt" > "$prompt_file"
 
-  if [[ "$agent_name" == "Claude" ]]; then
-    echo "  Invoking Claude (Round $round)..."
-    response=$(claude -p "$prompt" 2>/dev/null)
-  elif [[ "$agent_name" == "Codex" ]]; then
-    echo "  Invoking Codex (Round $round)..."
-    # codex quiet mode — adjust command if CLI interface differs
-    response=$(codex -q "$prompt" 2>/dev/null)
-  else
-    echo "  Error: Unknown agent: $agent_name"
+  echo "  Invoking $agent_name (Round $round)..."
+  local response
+  if ! response=$(python3 - "$RUNTIME_CONFIG_FILE" "$agent_idx" "$prompt_file" <<'PY'
+import json
+import subprocess
+import sys
+
+config_file = sys.argv[1]
+agent_idx = int(sys.argv[2]) - 1
+prompt_file = sys.argv[3]
+
+with open(config_file, "r", encoding="utf-8") as f:
+    cfg = json.load(f)
+
+agents = cfg.get("agents", [])
+if agent_idx < 0 or agent_idx >= len(agents):
+    print(f"Error: invalid agent index {agent_idx + 1}", file=sys.stderr)
+    raise SystemExit(1)
+
+agent = agents[agent_idx]
+command = agent.get("command", [])
+transport = agent.get("prompt_transport", "arg")
+
+if not isinstance(command, list) or not command:
+    print("Error: invalid agent command", file=sys.stderr)
+    raise SystemExit(1)
+
+with open(prompt_file, "r", encoding="utf-8") as f:
+    prompt = f.read()
+
+if transport == "stdin":
+    result = subprocess.run(command, input=prompt, capture_output=True, text=True)
+else:
+    result = subprocess.run(command + [prompt], capture_output=True, text=True)
+
+if result.returncode != 0:
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    raise SystemExit(result.returncode)
+
+sys.stdout.write(result.stdout)
+PY
+  ); then
+    rm -f "$prompt_file"
+    echo "  Error: $agent_name failed Round $round."
     return 1
   fi
+
+  rm -f "$prompt_file"
 
   # Write response back to debate file
   if [[ -n "$response" ]]; then
@@ -169,7 +488,10 @@ $debate_content"
 
 echo ""
 echo "=== Agent Debate: $TOPIC ==="
-echo "  Rounds: $MAX_ROUNDS | Agent 1: $AGENT_1 | Agent 2: $AGENT_2"
+echo "  Rounds: $MAX_ROUNDS | Agents: $(agent_list_text)"
+if [[ -n "$CONFIG_FILE" ]]; then
+  echo "  Config: $CONFIG_FILE"
+fi
 echo ""
 
 END_ROUND=$(( CURRENT_ROUND + MAX_ROUNDS - 1 ))
@@ -177,21 +499,11 @@ END_ROUND=$(( CURRENT_ROUND + MAX_ROUNDS - 1 ))
 for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
   echo "--- Round $round ---"
 
-  # Agent 1 goes first
-  invoke_agent "$AGENT_1" "$AGENT_2" "$round"
+  for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+    invoke_agent "$idx" "$round"
+  done
 
-  # Check for convergence
-  if grep -q "STATUS: CONVERGED" "$DEBATE_FILE" 2>/dev/null; then
-    echo ""
-    echo "  $AGENT_1 marked CONVERGED. Checking with $AGENT_2..."
-  fi
-
-  # Agent 2 responds
-  invoke_agent "$AGENT_2" "$AGENT_1" "$round"
-
-  # Check for mutual convergence
-  CONVERGED_COUNT=$(grep -c "STATUS: CONVERGED" "$DEBATE_FILE" 2>/dev/null || echo "0")
-  if [[ "$CONVERGED_COUNT" -ge 1 ]]; then
+  if is_converged; then
     # Both agents see the same file — if STATUS is still CONVERGED after agent 2, they agree
     echo ""
     echo "=== CONVERGED at Round $round ==="

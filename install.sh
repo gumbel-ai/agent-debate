@@ -208,6 +208,22 @@ uninstall_agent() {
   fi
 }
 
+install_shared_config() {
+  local shared_dir="$HOME/.agent-debate"
+  mkdir -p "$shared_dir"
+  get_file "debate.config.json" "$shared_dir/config.json"
+  echo "  $shared_dir/config.json (default config)"
+}
+
+uninstall_shared_config() {
+  local shared_dir="$HOME/.agent-debate"
+  if [[ -d "$shared_dir" ]]; then
+    rm -rf "$shared_dir"
+    echo "Shared config:"
+    echo "  $shared_dir/ (removed)"
+  fi
+}
+
 # --- Main ---
 
 echo ""
@@ -225,6 +241,8 @@ if [[ "$UNINSTALL" == true ]]; then
     echo "Codex:"
     uninstall_agent "Codex" "$HOME/.codex" "AGENTS.md"
   fi
+
+  uninstall_shared_config
 
   echo ""
   echo "Done."
@@ -250,6 +268,9 @@ else
     install_agent "Codex" "$HOME/.codex" "AGENTS.md" "$(codex_instructions)"
     installed="${installed}Codex, "
   fi
+
+  echo "Shared config:"
+  install_shared_config
 
   installed="${installed%, }"
 
