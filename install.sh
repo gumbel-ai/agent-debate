@@ -130,7 +130,7 @@ CODEX_EOF
 install_agent() {
   local agent_name="$1"    # "Claude" or "Codex"
   local config_dir="$2"    # ~/.claude or ~/.codex
-  local config_file="$3"   # CLAUDE.md or agents.md
+  local config_file="$3"   # CLAUDE.md or AGENTS.md
   local instructions="$4"  # output of claude_instructions or codex_instructions
 
   local config_path="$config_dir/$config_file"
@@ -223,7 +223,7 @@ if [[ "$UNINSTALL" == true ]]; then
 
   if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "codex" ]]; then
     echo "Codex:"
-    uninstall_agent "Codex" "$HOME/.codex" "agents.md"
+    uninstall_agent "Codex" "$HOME/.codex" "AGENTS.md"
   fi
 
   echo ""
@@ -247,7 +247,7 @@ else
 
   if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "codex" ]]; then
     echo "Codex:"
-    install_agent "Codex" "$HOME/.codex" "agents.md" "$(codex_instructions)"
+    install_agent "Codex" "$HOME/.codex" "AGENTS.md" "$(codex_instructions)"
     installed="${installed}Codex, "
   fi
 
