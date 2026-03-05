@@ -30,6 +30,7 @@ AGENTS_SPEC=""
 RUNTIME_CONFIG_FILE=""
 AGENT_COUNT=0
 declare -a AGENT_NAMES=()
+HOST_PROVIDER=""
 
 cleanup() {
   if [[ -n "${RUNTIME_CONFIG_FILE:-}" && -f "${RUNTIME_CONFIG_FILE:-}" ]]; then
@@ -104,39 +105,62 @@ resolve_config() {
   fi
 }
 
+detect_host_provider() {
+  if [[ -n "${AGENT_DEBATE_HOST_PROVIDER:-}" ]]; then
+    HOST_PROVIDER="$(printf '%s' "$AGENT_DEBATE_HOST_PROVIDER" | tr '[:upper:]' '[:lower:]')"
+    return
+  fi
+
+  if [[ -n "${CODEX_THREAD_ID:-}" ]]; then
+    HOST_PROVIDER="codex"
+  elif [[ -n "${CLAUDE_CODE_SSE_PORT:-}" || -n "${CLAUDECODE:-}" ]]; then
+    HOST_PROVIDER="claude"
+  elif [[ -n "${GEMINI_CLI_SESSION:-}" || -n "${GEMINI_SESSION_ID:-}" ]]; then
+    HOST_PROVIDER="gemini"
+  else
+    HOST_PROVIDER=""
+  fi
+}
+
 resolve_agents() {
   RUNTIME_CONFIG_FILE=$(mktemp)
 
   local resolution_output
-  if ! resolution_output=$(python3 - "$CONFIG_FILE" "$AGENTS_SPEC" "$RUNTIME_CONFIG_FILE" <<'PY'
+  if ! resolution_output=$(python3 - "$CONFIG_FILE" "$AGENTS_SPEC" "$RUNTIME_CONFIG_FILE" "$HOST_PROVIDER" <<'PY'
 import json
+import os
 import sys
 
 config_path = sys.argv[1]
 agents_spec = sys.argv[2].strip()
 out_path = sys.argv[3]
+host_provider = sys.argv[4].strip().lower()
 
 BUILTIN_ALIASES = {
     "opus": {
         "name": "Opus",
+        "provider": "claude",
         "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
         "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "sonnet": {
         "name": "Sonnet",
+        "provider": "claude",
         "command_template": ["claude", "-p", "--model", "sonnet", "--effort", "{EFFORT}"],
         "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "codex": {
         "name": "Codex",
+        "provider": "codex",
         "command_template": ["codex", "exec", "-c", "model_reasoning_effort=\"{EFFORT}\""],
         "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "gemini": {
         "name": "Gemini 2.5 Pro",
+        "provider": "gemini",
         "command_template": ["gemini", "-p", "--model", "{MODEL}"],
         "default_model": "gemini-2.5-pro",
         "prompt_transport": "arg",
@@ -191,6 +215,7 @@ if len(requested) < min_agents or len(requested) > max_agents:
 
 resolved = []
 unique_participants = set()
+provider_counts = {}
 
 for token in requested:
     if ":" in token:
@@ -207,6 +232,13 @@ for token in requested:
     spec = aliases[alias]
     if not isinstance(spec, dict):
         fail(f"alias '{alias}' must be an object")
+
+    provider = spec.get("provider", "")
+    if provider is None:
+        provider = ""
+    if not isinstance(provider, str):
+        fail(f"alias '{alias}' provider must be a string when set")
+    provider = provider.strip().lower()
 
     name = spec.get("name")
     if not isinstance(name, str) or not name.strip():
@@ -253,19 +285,35 @@ for token in requested:
             part = part.replace("{EFFORT}", effort_value)
         cmd.append(part)
 
+    if not provider and cmd:
+        cmd_base = os.path.basename(cmd[0]).lower()
+        if cmd_base in ("claude", "codex", "gemini"):
+            provider = cmd_base
+
     participant_key = (alias, model_value if has_model_placeholder else "")
     unique_participants.add(participant_key)
 
     resolved.append(
         {
             "name": name.strip(),
+            "provider": provider,
             "command": cmd,
             "prompt_transport": transport,
         }
     )
+    provider_key = provider or "unknown"
+    provider_counts[provider_key] = provider_counts.get(provider_key, 0) + 1
 
 if len(unique_participants) < 2:
     fail("need at least two unique participants")
+
+if host_provider in ("claude", "codex", "gemini"):
+    host_count = provider_counts.get(host_provider, 0)
+    if host_count > 1:
+        fail(
+            f"host session '{host_provider}' cannot auto-run multiple aliases from the same provider ({host_count} selected). "
+            "Use one alias from this provider in this session, or run from a different host CLI."
+        )
 
 with open(out_path, "w", encoding="utf-8") as f:
     json.dump({"agents": resolved}, f)
@@ -317,6 +365,13 @@ has_open_disputes() {
   grep -Eq '^\|.*\|[[:space:]]*OPEN[[:space:]]*\|[[:space:]]*$' "$DEBATE_FILE"
 }
 
+looks_like_debate_file() {
+  local content="$1"
+  [[ "$content" == *"## Proposal"* ]] \
+    && [[ "$content" == *"## Dispute Log"* ]] \
+    && [[ "$content" == *"| Round | Agent |"* ]]
+}
+
 is_converged() {
   grep -q "STATUS: CONVERGED" "$DEBATE_FILE" && ! has_open_disputes
 }
@@ -331,6 +386,7 @@ agent_list_text() {
 }
 
 resolve_config
+detect_host_provider
 resolve_agents
 
 if [[ -n "$AGENT1_OVERRIDE_NAME" ]]; then
@@ -481,6 +537,7 @@ $debate_content"
   local response
   if ! response=$(python3 - "$RUNTIME_CONFIG_FILE" "$agent_idx" "$prompt_file" <<'PY'
 import json
+import os
 import subprocess
 import sys
 
@@ -499,18 +556,35 @@ if agent_idx < 0 or agent_idx >= len(agents):
 agent = agents[agent_idx]
 command = agent.get("command", [])
 transport = agent.get("prompt_transport", "arg")
+provider = str(agent.get("provider", "")).strip().lower()
 
 if not isinstance(command, list) or not command:
     print("Error: invalid agent command", file=sys.stderr)
     raise SystemExit(1)
+if not provider and isinstance(command[0], str):
+    cmd_base = os.path.basename(command[0]).lower()
+    if cmd_base in ("claude", "codex", "gemini"):
+        provider = cmd_base
 
 with open(prompt_file, "r", encoding="utf-8") as f:
     prompt = f.read()
 
+env = os.environ.copy()
+if provider == "claude":
+    env.pop("CLAUDECODE", None)
+    for key in list(env.keys()):
+        if key.startswith("CLAUDE_CODE_"):
+            env.pop(key, None)
+elif provider == "codex":
+    env.pop("CODEX_THREAD_ID", None)
+elif provider == "gemini":
+    env.pop("GEMINI_SESSION_ID", None)
+    env.pop("GEMINI_CLI_SESSION", None)
+
 if transport == "stdin":
-    result = subprocess.run(command, input=prompt, capture_output=True, text=True)
+    result = subprocess.run(command, input=prompt, capture_output=True, text=True, env=env)
 else:
-    result = subprocess.run(command + [prompt], capture_output=True, text=True)
+    result = subprocess.run(command + [prompt], capture_output=True, text=True, env=env)
 
 if result.returncode != 0:
     if result.stderr:
@@ -529,6 +603,17 @@ PY
 
   # Write response back to debate file
   if [[ -n "$response" ]]; then
+    if ! looks_like_debate_file "$response"; then
+      local raw_output_file
+      raw_output_file="${DEBATE_FILE%.md}.agent${agent_idx}.round${round}.raw.txt"
+      printf '%s' "$response" > "$raw_output_file"
+      echo "  Error: $agent_name returned non-debate output in Round $round."
+      if [[ "$response" == *"can't run nested Claude Code sessions"* ]]; then
+        echo "  Hint: run orchestrator from a regular terminal session, or use --agents without Claude (e.g., codex,gemini)."
+      fi
+      echo "  Raw output saved: $raw_output_file"
+      return 1
+    fi
     echo "$response" > "$DEBATE_FILE"
     echo "  $agent_name finished Round $round."
   else

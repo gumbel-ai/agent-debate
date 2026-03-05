@@ -95,6 +95,7 @@ When user says **"auto debate"** or asks for an automated multi-agent debate:
 2. Example: `./orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 3. For 3 agents: `./orchestrate.sh --topic "question" --agents opus,codex,gemini --rounds 2`
 4. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection
+5. If running inside Claude Code, include at most one Claude alias in auto mode (e.g., `opus,codex` or `opus,codex,gemini`). Do not run multiple Claude aliases together in the same session (e.g., `opus,sonnet,codex`).
 
 ### Key Files
 - `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
@@ -137,6 +138,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 2. For 3 agents: `--agents opus,codex,gemini`
 3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
+4. If running inside Codex, include at most one Codex alias in auto mode. Do not run multiple Codex aliases together in the same session.
 
 ### Key files:
 - `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
@@ -179,6 +181,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 2. For 3 agents: `--agents opus,codex,gemini`
 3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
+4. If running inside Gemini CLI, include at most one Gemini alias in auto mode. Do not run multiple Gemini aliases together in the same session.
 
 ### Key files:
 - `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)

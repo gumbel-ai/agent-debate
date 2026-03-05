@@ -60,7 +60,8 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
     },
     "codex": {
       "name": "Codex",
-      "command_template": ["codex", "exec"],
+      "command_template": ["codex", "exec", "-c", "model_reasoning_effort=\"{EFFORT}\""],
+      "reasoning": { "default": "medium", "allowed": ["low", "medium", "high"] },
       "prompt_transport": "arg"
     }
   },
@@ -73,7 +74,8 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 ```
 
 - `{MODEL}` in `command_template` supports runtime model overrides (e.g., `gemini:gemini-2.5-flash`).
-- `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value. Only Claude CLI supports `--effort` currently.
+- `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value.
+- In hosted sessions (Claude Code, Codex, Gemini CLI), auto mode supports at most one alias from the host provider per run.
 
 3-agent debates are supported. Use `--agents opus,codex,gemini` to include a third agent.
 
