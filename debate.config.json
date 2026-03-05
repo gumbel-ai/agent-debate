@@ -1,25 +1,33 @@
 {
   "aliases": {
     "opus": {
-      "name": "Opus 4.6",
-      "command_template": ["claude", "-p", "--model", "claude-opus-4-6"],
+      "name": "Opus",
+      "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
+      "reasoning": {
+        "default": "medium",
+        "allowed": ["low", "medium", "high"]
+      },
       "prompt_transport": "arg"
     },
     "sonnet": {
-      "name": "Sonnet 4.6",
-      "command_template": ["claude", "-p", "--model", "claude-sonnet-4-6"],
+      "name": "Sonnet",
+      "command_template": ["claude", "-p", "--model", "sonnet", "--effort", "{EFFORT}"],
+      "reasoning": {
+        "default": "medium",
+        "allowed": ["low", "medium", "high"]
+      },
       "prompt_transport": "arg"
     },
     "codex": {
       "name": "Codex",
-      "command_template": ["codex", "-q"],
+      "command_template": ["codex", "exec"],
       "prompt_transport": "arg"
     },
     "gemini": {
       "name": "Gemini 2.5 Pro",
-      "command_template": ["gemini", "--model", "{MODEL}"],
+      "command_template": ["gemini", "-p", "--model", "{MODEL}"],
       "default_model": "gemini-2.5-pro",
-      "prompt_transport": "stdin"
+      "prompt_transport": "arg"
     }
   },
   "debate": {

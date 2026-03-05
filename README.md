@@ -36,14 +36,14 @@ The second agent reads the file, responds in-place per the protocol, and stops. 
 
 The installer ships a default config at `~/.agent-debate/config.json` with built-in agent aliases:
 
-| Alias | Agent | Transport |
-|-------|-------|-----------|
-| `opus` | Opus 5.6 | arg |
-| `sonnet` | Sonnet 5.6 | arg |
-| `codex` | Codex 5.3 | arg |
-| `gemini` | Gemini 3.1 Pro | stdin |
+| Alias | Agent | Transport | Effort support |
+|-------|-------|-----------|----------------|
+| `opus` | Claude Opus | arg | `--effort` (low/medium/high) |
+| `sonnet` | Claude Sonnet | arg | `--effort` (low/medium/high) |
+| `codex` | Codex | arg | none |
+| `gemini` | Gemini 2.5 Pro | arg | none |
 
-Default pair: `opus` + `codex`. Override per-project by placing a `debate.config.json` in your project root.
+Default pair: `opus` + `codex`. Claude aliases default to `medium` reasoning effort. Override per-project by placing a `debate.config.json` in your project root.
 
 ### Custom agent pairs
 
@@ -53,13 +53,14 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 {
   "aliases": {
     "opus": {
-      "name": "Opus 5.6",
-      "command_template": ["claude", "-p", "--model", "claude-opus-5-6"],
+      "name": "Opus",
+      "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
+      "reasoning": { "default": "medium", "allowed": ["low", "medium", "high"] },
       "prompt_transport": "arg"
     },
     "codex": {
-      "name": "Codex 5.3",
-      "command_template": ["codex", "-q"],
+      "name": "Codex",
+      "command_template": ["codex", "exec"],
       "prompt_transport": "arg"
     }
   },
@@ -71,7 +72,8 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 }
 ```
 
-Aliases with `{MODEL}` in `command_template` support runtime model overrides (e.g., `gemini:gemini-2.5-flash`).
+- `{MODEL}` in `command_template` supports runtime model overrides (e.g., `gemini:gemini-2.5-flash`).
+- `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value. Only Claude CLI supports `--effort` currently.
 
 Note: 3-agent selection is configurable now, but orchestrated 3-agent debates are intentionally blocked until guardrails v2 is added.
 

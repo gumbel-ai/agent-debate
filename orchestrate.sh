@@ -114,25 +114,27 @@ out_path = sys.argv[3]
 
 BUILTIN_ALIASES = {
     "opus": {
-        "name": "Opus 4.6",
-        "command_template": ["claude", "-p", "--model", "claude-opus-4-6"],
+        "name": "Opus",
+        "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
+        "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "sonnet": {
-        "name": "Sonnet 4.6",
-        "command_template": ["claude", "-p", "--model", "claude-sonnet-4-6"],
+        "name": "Sonnet",
+        "command_template": ["claude", "-p", "--model", "sonnet", "--effort", "{EFFORT}"],
+        "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "codex": {
         "name": "Codex",
-        "command_template": ["codex", "-q"],
+        "command_template": ["codex", "exec"],
         "prompt_transport": "arg",
     },
     "gemini": {
         "name": "Gemini 2.5 Pro",
-        "command_template": ["gemini", "--model", "{MODEL}"],
+        "command_template": ["gemini", "-p", "--model", "{MODEL}"],
         "default_model": "gemini-2.5-pro",
-        "prompt_transport": "stdin",
+        "prompt_transport": "arg",
     },
 }
 
@@ -214,18 +216,37 @@ for token in requested:
         fail(f"alias '{alias}' prompt_transport must be 'arg' or 'stdin'")
 
     has_model_placeholder = any("{MODEL}" in part for part in template)
+    has_effort_placeholder = any("{EFFORT}" in part for part in template)
     if model_override and not has_model_placeholder:
         fail(f"alias '{alias}' does not support model overrides")
 
     model_value = model_override or spec.get("default_model", "")
+    reasoning = spec.get("reasoning", {})
+    if reasoning is None:
+        reasoning = {}
+    if not isinstance(reasoning, dict):
+        fail(f"alias '{alias}' reasoning must be an object")
+    effort_value = reasoning.get("default", "")
+    if has_effort_placeholder and not effort_value:
+        fail(f"alias '{alias}' requires reasoning.default when using {{EFFORT}}")
+    allowed_efforts = reasoning.get("allowed")
+    if effort_value and allowed_efforts is not None:
+        if not isinstance(allowed_efforts, list) or not all(isinstance(v, str) and v for v in allowed_efforts):
+            fail(f"alias '{alias}' reasoning.allowed must be an array of non-empty strings")
+        if effort_value not in allowed_efforts:
+            fail(f"alias '{alias}' reasoning.default '{effort_value}' is not in reasoning.allowed")
+
     cmd = []
     for part in template:
         if "{MODEL}" in part:
             if not model_value:
                 fail(f"alias '{alias}' requires a model override or default_model")
-            cmd.append(part.replace("{MODEL}", model_value))
-        else:
-            cmd.append(part)
+            part = part.replace("{MODEL}", model_value)
+        if "{EFFORT}" in part:
+            if not effort_value:
+                fail(f"alias '{alias}' requires reasoning.default when using {{EFFORT}}")
+            part = part.replace("{EFFORT}", effort_value)
+        cmd.append(part)
 
     participant_key = (alias, model_value if has_model_placeholder else "")
     unique_participants.add(participant_key)
