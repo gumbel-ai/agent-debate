@@ -30,7 +30,9 @@ AGENTS_SPEC=""
 RUNTIME_CONFIG_FILE=""
 AGENT_COUNT=0
 declare -a AGENT_NAMES=()
+declare -a AGENT_PROVIDERS=()
 HOST_PROVIDER=""
+SKIP_PROVIDER=""
 
 cleanup() {
   if [[ -n "${RUNTIME_CONFIG_FILE:-}" && -f "${RUNTIME_CONFIG_FILE:-}" ]]; then
@@ -48,8 +50,9 @@ Start a new debate:
   --topic "question"          The debate topic (required for new debates)
   --files file1 file2 ...     Relevant source files to include as context
   --constraints "text"        Non-negotiable constraints
-  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini:gemini-2.5-pro,codex,sonnet)
+  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini:gemini-3,codex,sonnet)
   --config path/to/config.json  Agent configuration file (optional)
+  --skip-provider name        Skip invoking one provider (claude|codex|gemini) in this run; required when host provider is in lineup
   --rounds N                  Max rounds per agent (default: 3)
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
@@ -71,6 +74,7 @@ while [[ $# -gt 0 ]]; do
     --constraints) CONSTRAINTS="$2"; shift 2 ;;
     --agents) AGENTS_SPEC="$2"; shift 2 ;;
     --config) CONFIG_FILE="$2"; shift 2 ;;
+    --skip-provider) SKIP_PROVIDER="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
     --rounds) MAX_ROUNDS="$2"; shift 2 ;;
     --resume) RESUME_FILE="$2"; shift 2 ;;
     --agent1) AGENT1_OVERRIDE_NAME="$2"; shift 2 ;;
@@ -126,7 +130,7 @@ resolve_agents() {
   RUNTIME_CONFIG_FILE=$(mktemp)
 
   local resolution_output
-  if ! resolution_output=$(python3 - "$CONFIG_FILE" "$AGENTS_SPEC" "$RUNTIME_CONFIG_FILE" "$HOST_PROVIDER" <<'PY'
+  if ! resolution_output=$(python3 - "$CONFIG_FILE" "$AGENTS_SPEC" "$RUNTIME_CONFIG_FILE" "$HOST_PROVIDER" "$SKIP_PROVIDER" <<'PY'
 import json
 import os
 import sys
@@ -135,6 +139,7 @@ config_path = sys.argv[1]
 agents_spec = sys.argv[2].strip()
 out_path = sys.argv[3]
 host_provider = sys.argv[4].strip().lower()
+skip_provider = sys.argv[5].strip().lower()
 
 BUILTIN_ALIASES = {
     "opus": {
@@ -159,10 +164,9 @@ BUILTIN_ALIASES = {
         "prompt_transport": "arg",
     },
     "gemini": {
-        "name": "Gemini 2.5 Pro",
+        "name": "Gemini",
         "provider": "gemini",
-        "command_template": ["gemini", "-p", "--model", "{MODEL}"],
-        "default_model": "gemini-2.5-pro",
+        "command_template": ["gemini", "-p"],
         "prompt_transport": "arg",
     },
 }
@@ -254,8 +258,6 @@ for token in requested:
 
     has_model_placeholder = any("{MODEL}" in part for part in template)
     has_effort_placeholder = any("{EFFORT}" in part for part in template)
-    if model_override and not has_model_placeholder:
-        fail(f"alias '{alias}' does not support model overrides")
 
     model_value = model_override or spec.get("default_model", "")
     reasoning = spec.get("reasoning", {})
@@ -285,12 +287,16 @@ for token in requested:
             part = part.replace("{EFFORT}", effort_value)
         cmd.append(part)
 
+    # If model override given but no {MODEL} placeholder, append --model <value>
+    if model_override and not has_model_placeholder:
+        cmd.extend(["--model", model_override])
+
     if not provider and cmd:
         cmd_base = os.path.basename(cmd[0]).lower()
         if cmd_base in ("claude", "codex", "gemini"):
             provider = cmd_base
 
-    participant_key = (alias, model_value if has_model_placeholder else "")
+    participant_key = (alias, model_value)
     unique_participants.add(participant_key)
 
     resolved.append(
@@ -309,10 +315,10 @@ if len(unique_participants) < 2:
 
 if host_provider in ("claude", "codex", "gemini"):
     host_count = provider_counts.get(host_provider, 0)
-    if host_count > 1:
+    if host_count > 0 and skip_provider != host_provider:
         fail(
-            f"host session '{host_provider}' cannot auto-run multiple aliases from the same provider ({host_count} selected). "
-            "Use one alias from this provider in this session, or run from a different host CLI."
+            f"host session '{host_provider}' includes {host_count} alias(es) from the host provider. "
+            f"Use --skip-provider {host_provider} so the host can take its own turns directly while orchestrator runs other providers."
         )
 
 with open(out_path, "w", encoding="utf-8") as f:
@@ -320,7 +326,7 @@ with open(out_path, "w", encoding="utf-8") as f:
 
 print(len(resolved))
 for agent in resolved:
-    print(agent["name"])
+    print(f"{agent['name']}\t{agent.get('provider', '')}")
 PY
   ); then
     exit 1
@@ -339,13 +345,25 @@ PY
 
   AGENT_COUNT="${resolved_lines[0]}"
   AGENT_NAMES=()
+  AGENT_PROVIDERS=()
   local i
+  local resolved_name resolved_provider
   for (( i=1; i<${#resolved_lines[@]}; i++ )); do
-    AGENT_NAMES+=("${resolved_lines[$i]}")
+    IFS=$'\t' read -r resolved_name resolved_provider <<< "${resolved_lines[$i]}"
+    if [[ -z "$resolved_name" ]]; then
+      echo "Error: resolved agent entry missing name"
+      exit 1
+    fi
+    AGENT_NAMES+=("$resolved_name")
+    AGENT_PROVIDERS+=("$resolved_provider")
   done
 
   if [[ "${#AGENT_NAMES[@]}" -ne "$AGENT_COUNT" ]]; then
     echo "Error: resolved agent count mismatch"
+    exit 1
+  fi
+  if [[ "${#AGENT_PROVIDERS[@]}" -ne "$AGENT_COUNT" ]]; then
+    echo "Error: resolved provider count mismatch"
     exit 1
   fi
 
@@ -609,7 +627,7 @@ PY
       printf '%s' "$response" > "$raw_output_file"
       echo "  Error: $agent_name returned non-debate output in Round $round."
       if [[ "$response" == *"can't run nested Claude Code sessions"* ]]; then
-        echo "  Hint: run orchestrator from a regular terminal session, or use --agents without Claude (e.g., codex,gemini)."
+        echo "  Hint: in host sessions, use --skip-provider <host> and have the host take its own turns directly."
       fi
       echo "  Raw output saved: $raw_output_file"
       return 1
@@ -627,14 +645,35 @@ echo "  Rounds: $MAX_ROUNDS | Agents: $(agent_list_text)"
 if [[ -n "$CONFIG_FILE" ]]; then
   echo "  Config: $CONFIG_FILE"
 fi
+if [[ -n "$SKIP_PROVIDER" ]]; then
+  echo "  Skip provider: $SKIP_PROVIDER (host-direct turns expected for this provider)"
+fi
 echo ""
 
 END_ROUND=$(( CURRENT_ROUND + MAX_ROUNDS - 1 ))
+
+ACTIVE_AGENT_COUNT=0
+for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+  provider="${AGENT_PROVIDERS[$((idx - 1))]}"
+  if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
+    continue
+  fi
+  ACTIVE_AGENT_COUNT=$((ACTIVE_AGENT_COUNT + 1))
+done
+if [[ "$ACTIVE_AGENT_COUNT" -eq 0 ]]; then
+  echo "Error: no runnable agents after applying --skip-provider $SKIP_PROVIDER"
+  exit 1
+fi
 
 for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
   echo "--- Round $round ---"
 
   for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+    provider="${AGENT_PROVIDERS[$((idx - 1))]}"
+    if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
+      echo "  Skipping ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
+      continue
+    fi
     invoke_agent "$idx" "$round"
   done
 

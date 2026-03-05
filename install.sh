@@ -88,14 +88,14 @@ When user says **"start a debate on <topic>"**:
 3. You are Agent 1. Write the initial proposal
 4. If only 2 agents, remove the `**Agent 3:**` line from the file
 
-### Auto Mode (orchestrator runs all agents)
+### Auto Mode (orchestrator-assisted)
 
 When user says **"auto debate"** or asks for an automated multi-agent debate:
 1. Run the orchestrator: `~/.agent-debate/orchestrate.sh` (or the repo copy if available)
 2. Example: `./orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 3. For 3 agents: `./orchestrate.sh --topic "question" --agents opus,codex,gemini --rounds 2`
-4. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection
-5. If running inside Claude Code, include at most one Claude alias in auto mode (e.g., `opus,codex` or `opus,codex,gemini`). Do not run multiple Claude aliases together in the same session (e.g., `opus,sonnet,codex`).
+4. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
+5. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Claude example: `--skip-provider claude`).
 
 ### Key Files
 - `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
@@ -132,13 +132,13 @@ When user says "continue debate N" or "respond to debate N":
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 4. If only 2 agents, remove the `**Agent 3:**` line from the file.
 
-### Auto Mode (orchestrator runs all agents)
+### Auto Mode (orchestrator-assisted)
 
 When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 2. For 3 agents: `--agents opus,codex,gemini`
-3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
-4. If running inside Codex, include at most one Codex alias in auto mode. Do not run multiple Codex aliases together in the same session.
+3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
+4. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Codex example: `--skip-provider codex`).
 
 ### Key files:
 - `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
@@ -175,13 +175,13 @@ When user says "continue debate N" or "respond to debate N":
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 4. If only 2 agents, remove the `**Agent 3:**` line from the file.
 
-### Auto Mode (orchestrator runs all agents)
+### Auto Mode (orchestrator-assisted)
 
 When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
 2. For 3 agents: `--agents opus,codex,gemini`
-3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
-4. If running inside Gemini CLI, include at most one Gemini alias in auto mode. Do not run multiple Gemini aliases together in the same session.
+3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
+4. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Gemini example: `--skip-provider gemini`).
 
 ### Key files:
 - `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)

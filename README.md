@@ -41,7 +41,7 @@ The installer ships a default config at `~/.agent-debate/config.json` with built
 | `opus` | Claude Opus | arg | `--effort` (low/medium/high) |
 | `sonnet` | Claude Sonnet | arg | `--effort` (low/medium/high) |
 | `codex` | Codex | arg | `-c model_reasoning_effort` (low/medium/high) |
-| `gemini` | Gemini 2.5 Pro | arg | none |
+| `gemini` | Gemini (auto) | arg | none |
 
 Default pair: `opus` + `codex`. Claude and Codex aliases default to `medium` reasoning effort. Gemini CLI has no effort flag. Override per-project by placing a `debate.config.json` in your project root.
 
@@ -73,11 +73,12 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 }
 ```
 
-- `{MODEL}` in `command_template` supports runtime model overrides (e.g., `gemini:gemini-2.5-flash`).
+- Gemini CLI auto-selects the best model (currently Gemini 3 family). Override with `gemini:gemini-2.5-pro` syntax.
 - `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value.
-- In hosted sessions (Claude Code, Codex, Gemini CLI), auto mode supports at most one alias from the host provider per run.
+- In host sessions, if your own provider is in the lineup, run host-direct rounds and call orchestrator with `--skip-provider <host>` so it runs only the other providers.
 
 3-agent debates are supported. Use `--agents opus,codex,gemini` to include a third agent.
+Use `--skip-provider claude|codex|gemini` for host-direct rounds when that provider is participating in the same host session.
 
 ## How It Works
 

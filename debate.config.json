@@ -28,9 +28,8 @@
       "prompt_transport": "arg"
     },
     "gemini": {
-      "name": "Gemini 2.5 Pro",
-      "command_template": ["gemini", "-p", "--model", "{MODEL}"],
-      "default_model": "gemini-2.5-pro",
+      "name": "Gemini",
+      "command_template": ["gemini", "-p"],
       "prompt_transport": "arg"
     }
   },
