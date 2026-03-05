@@ -14,7 +14,7 @@ This is not a chatbot. It's adversarial code review with convergence rules.
 curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install.sh | bash
 ```
 
-This installs the debate protocol into your Claude Code (`~/.claude/CLAUDE.md`) and Codex (`~/.codex/AGENTS.md`) global configs, plus a shared config at `~/.agent-debate/config.json`. Install for one agent only with `--agent claude` or `--agent codex`.
+This installs the debate protocol into your Claude Code (`~/.claude/CLAUDE.md`), Codex (`~/.codex/AGENTS.md`), and Gemini (`~/.gemini/GEMINI.md`) global configs, plus a shared config at `~/.agent-debate/config.json`. Install for one agent only with `--agent claude`, `--agent codex`, or `--agent gemini`.
 
 ## Usage
 

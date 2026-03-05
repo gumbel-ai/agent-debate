@@ -5,6 +5,7 @@
 #   ./install.sh                        # Install for all detected agents
 #   ./install.sh --agent claude          # Install for Claude only
 #   ./install.sh --agent codex           # Install for Codex only
+#   ./install.sh --agent gemini          # Install for Gemini only
 #   ./install.sh --uninstall             # Remove from all agents
 #   ./install.sh --uninstall --agent claude
 #
@@ -31,7 +32,7 @@ while [[ $# -gt 0 ]]; do
     --agent) TARGET_AGENT="$2"; shift 2 ;;
     --uninstall) UNINSTALL=true; shift ;;
     -h|--help)
-      sed -n '2,14p' "$0" 2>/dev/null || echo "Usage: install.sh [--agent claude|codex|all] [--uninstall]"
+      sed -n '2,15p' "$0" 2>/dev/null || echo "Usage: install.sh [--agent claude|codex|gemini|all] [--uninstall]"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
@@ -123,6 +124,37 @@ Two-agent technical debate via shared markdown files.
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CODEX_EOF
+}
+
+gemini_instructions() {
+  cat <<'GEMINI_EOF'
+<!-- agent-debate:start -->
+## Agent Debate System
+
+Structured multi-agent debate via shared markdown files.
+
+### When user says "continue debate N" or "respond to debate N":
+1. Read the debate file at `debates/N-*.md` in the current project.
+2. Read the guardrails at `~/.gemini/agent-debate/agent-guardrails.md`.
+3. You are the responding agent. Follow the guardrails exactly:
+   - Edit the document in-place (strikethrough + counter, not append).
+   - Tag every edit with your agent name and round: `[A2-R1]`.
+   - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
+   - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
+   - **Verify the other agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
+4. Do NOT make code changes unless the debate file explicitly allows it.
+
+### When user says "start a debate on <topic>":
+1. Create a new debate file in `./debates/` using the template at `~/.gemini/agent-debate/TEMPLATE.md`.
+2. Auto-number: find the highest `N-` prefix in existing files and increment.
+3. You are Agent 1. Write the initial proposal in the Proposal section.
+
+### Key files:
+- `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for both agents (read this first)
+- `~/.gemini/agent-debate/TEMPLATE.md` — Starting template for new debates
+- `./debates/` — All debate files, numbered `1-`, `2-`, etc.
+<!-- agent-debate:end -->
+GEMINI_EOF
 }
 
 # --- Install for one agent ---
@@ -242,6 +274,11 @@ if [[ "$UNINSTALL" == true ]]; then
     uninstall_agent "Codex" "$HOME/.codex" "AGENTS.md"
   fi
 
+  if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "gemini" ]]; then
+    echo "Gemini:"
+    uninstall_agent "Gemini" "$HOME/.gemini" "GEMINI.md"
+  fi
+
   uninstall_shared_config
 
   echo ""
@@ -267,6 +304,12 @@ else
     echo "Codex:"
     install_agent "Codex" "$HOME/.codex" "AGENTS.md" "$(codex_instructions)"
     installed="${installed}Codex, "
+  fi
+
+  if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "gemini" ]]; then
+    echo "Gemini:"
+    install_agent "Gemini" "$HOME/.gemini" "GEMINI.md" "$(gemini_instructions)"
+    installed="${installed}Gemini, "
   fi
 
   echo "Shared config:"
