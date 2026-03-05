@@ -40,10 +40,10 @@ The installer ships a default config at `~/.agent-debate/config.json` with built
 |-------|-------|-----------|----------------|
 | `opus` | Claude Opus | arg | `--effort` (low/medium/high) |
 | `sonnet` | Claude Sonnet | arg | `--effort` (low/medium/high) |
-| `codex` | Codex | arg | none |
+| `codex` | Codex | arg | `-c model_reasoning_effort` (low/medium/high) |
 | `gemini` | Gemini 2.5 Pro | arg | none |
 
-Default pair: `opus` + `codex`. Claude aliases default to `medium` reasoning effort. Override per-project by placing a `debate.config.json` in your project root.
+Default pair: `opus` + `codex`. Claude and Codex aliases default to `medium` reasoning effort. Gemini CLI has no effort flag. Override per-project by placing a `debate.config.json` in your project root.
 
 ### Custom agent pairs
 
@@ -75,7 +75,7 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 - `{MODEL}` in `command_template` supports runtime model overrides (e.g., `gemini:gemini-2.5-flash`).
 - `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value. Only Claude CLI supports `--effort` currently.
 
-Note: 3-agent selection is configurable now, but orchestrated 3-agent debates are intentionally blocked until guardrails v2 is added.
+3-agent debates are supported. Use `--agents opus,codex,gemini` to include a third agent.
 
 ## How It Works
 

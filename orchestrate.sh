@@ -23,6 +23,7 @@ AGENT_1="Claude"
 AGENT_2="Codex"
 AGENT1_OVERRIDE_NAME=""
 AGENT2_OVERRIDE_NAME=""
+AGENT3_OVERRIDE_NAME=""
 CONFIG_FILE=""
 AGENTS_SPEC=""
 RUNTIME_CONFIG_FILE=""
@@ -50,6 +51,7 @@ Start a new debate:
   --rounds N                  Max rounds per agent (default: 3)
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
+  --agent3 name               Override Agent 3 display name
 
 Resume an existing debate:
   --resume path/to/debate.md  Path to existing debate file
@@ -71,6 +73,7 @@ while [[ $# -gt 0 ]]; do
     --resume) RESUME_FILE="$2"; shift 2 ;;
     --agent1) AGENT1_OVERRIDE_NAME="$2"; shift 2 ;;
     --agent2) AGENT2_OVERRIDE_NAME="$2"; shift 2 ;;
+    --agent3) AGENT3_OVERRIDE_NAME="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
@@ -127,7 +130,8 @@ BUILTIN_ALIASES = {
     },
     "codex": {
         "name": "Codex",
-        "command_template": ["codex", "exec"],
+        "command_template": ["codex", "exec", "-c", "model_reasoning_effort=\"{EFFORT}\""],
+        "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
     "gemini": {
@@ -334,6 +338,9 @@ fi
 if [[ -n "$AGENT2_OVERRIDE_NAME" ]]; then
   AGENT_NAMES[1]="$AGENT2_OVERRIDE_NAME"
 fi
+if [[ -n "$AGENT3_OVERRIDE_NAME" && "$AGENT_COUNT" -ge 3 ]]; then
+  AGENT_NAMES[2]="$AGENT3_OVERRIDE_NAME"
+fi
 
 AGENT_1="${AGENT_NAMES[0]}"
 AGENT_2="${AGENT_NAMES[1]}"
@@ -358,9 +365,20 @@ if [[ -n "$RESUME_FILE" ]]; then
   CURRENT_ROUND=$(( (CURRENT_ROUND / AGENT_COUNT) + 1 ))
 else
   mkdir -p "$DEBATES_DIR"
-  # Auto-increment debate number from existing files
-  LAST_NUM=$(ls "$DEBATES_DIR"/*.md 2>/dev/null | sed 's|.*/||' | grep -oE '^[0-9]+' | sort -n | tail -1)
-  NEXT_NUM=$(( ${LAST_NUM:-0} + 1 ))
+  # Auto-increment debate number from existing files (safe when directory is empty)
+  LAST_NUM=0
+  shopt -s nullglob
+  for path in "$DEBATES_DIR"/*.md; do
+    base="${path##*/}"
+    if [[ "$base" =~ ^([0-9]+)- ]]; then
+      num="${BASH_REMATCH[1]}"
+      if (( num > LAST_NUM )); then
+        LAST_NUM="$num"
+      fi
+    fi
+  done
+  shopt -u nullglob
+  NEXT_NUM=$(( LAST_NUM + 1 ))
   SLUG=$(echo "$TOPIC" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-' | head -c 40)
   DEBATE_FILE="$DEBATES_DIR/${NEXT_NUM}-$(date +%Y-%m-%d)-${SLUG}.md"
   CURRENT_ROUND=1
@@ -391,6 +409,16 @@ else
     -e "s|{FILE_LIST_WITH_KEY_SECTIONS}|$FILE_CONTEXT|g" \
     -e "s|{ANY_CONSTRAINTS_OR_NON_NEGOTIABLES}|$CONSTRAINT_TEXT|g" \
     "$TEMPLATE" > "$DEBATE_FILE"
+
+  # Handle Agent 3: substitute or remove the placeholder line
+  tmp_debate=""
+  tmp_debate=$(mktemp)
+  if [[ "$AGENT_COUNT" -ge 3 ]]; then
+    sed "s|{AGENT_3_NAME}|${AGENT_NAMES[2]}|g" "$DEBATE_FILE" > "$tmp_debate"
+  else
+    sed '/{AGENT_3_NAME}/d' "$DEBATE_FILE" > "$tmp_debate"
+  fi
+  mv "$tmp_debate" "$DEBATE_FILE"
 
   echo "Created debate file: $DEBATE_FILE"
 fi
@@ -525,7 +553,7 @@ for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
   done
 
   if is_converged; then
-    # Both agents see the same file — if STATUS is still CONVERGED after agent 2, they agree
+    # All agents see the same file — if STATUS is still CONVERGED after the last agent, they agree
     echo ""
     echo "=== CONVERGED at Round $round ==="
     break

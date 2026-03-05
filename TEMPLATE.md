@@ -3,6 +3,7 @@
 **Created:** {DATE}
 **Agent 1:** {AGENT_1_NAME}
 **Agent 2:** {AGENT_2_NAME}
+**Agent 3:** {AGENT_3_NAME}
 **Max Rounds:** {MAX_ROUNDS}
 **Status:** OPEN
 
@@ -27,8 +28,8 @@
 STATUS: OPEN
 
 {Agent 1 writes the initial proposal here in Round 1.
- Agent 2 edits in-place starting Round 1 response.
- Both agents continue editing in-place through subsequent rounds.
+ Other agents edit in-place starting Round 1 response.
+ All agents continue editing in-place through subsequent rounds.
  See agent-guardrails.md for editing conventions.
 
  Every fix must cite exact file:line, what the code does now, and what it should do instead.
@@ -39,7 +40,7 @@ STATUS: OPEN
 ## Parking Lot
 
 {Related issues noticed during debate that are out of scope.
- Either agent can add items here. Format: `- [A1-R2] <issue description>`}
+ Any agent can add items here. Format: `- [A1-R2] <issue description>`}
 
 ---
 
@@ -49,4 +50,4 @@ STATUS: OPEN
 |-------|-------|---------|--------------|-----|--------|
 | | | | | | |
 
-**Status values:** `OPEN` = unresolved, needs further debate. `CLOSED` = both agents agree (accepted, conceded, or resolved). `PARKED` = deferred, not blocking convergence.
+**Status values:** `OPEN` = unresolved, needs further debate. `CLOSED` = all agents agree (accepted, conceded, or resolved). `PARKED` = deferred, not blocking convergence.

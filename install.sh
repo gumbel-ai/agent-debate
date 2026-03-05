@@ -88,7 +88,7 @@ When user says **"start a debate on <topic>"**:
 3. You are Agent 1. Write the initial proposal
 
 ### Key Files
-- `~/.claude/agent-debate/agent-guardrails.md` — Rules for both agents (read first)
+- `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
 - `~/.claude/agent-debate/TEMPLATE.md` — Template for new debates
 - `./debates/` — Project-local debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
@@ -100,7 +100,7 @@ codex_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Two-agent technical debate via shared markdown files.
+Multi-agent technical debate via shared markdown files.
 
 ### When user says "continue debate N" or "respond to debate N":
 1. Read the debate file at `debates/N-*.md` in the current project.
@@ -119,7 +119,7 @@ Two-agent technical debate via shared markdown files.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 
 ### Key files:
-- `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for both agents (read this first)
+- `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.codex/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
@@ -150,7 +150,7 @@ Structured multi-agent debate via shared markdown files.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 
 ### Key files:
-- `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for both agents (read this first)
+- `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.gemini/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
