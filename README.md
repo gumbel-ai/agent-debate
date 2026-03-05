@@ -73,7 +73,7 @@ Edit `~/.agent-debate/config.json` to add aliases or change defaults:
 }
 ```
 
-- Gemini CLI auto-selects the best model (currently Gemini 3 family). Override with `gemini:gemini-2.5-pro` syntax.
+- Gemini alias defaults to CLI auto-routing (Gemini 3 family). You can still try `alias:model` overrides when your local Gemini CLI supports that model ID.
 - `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value.
 - In host sessions, if your own provider is in the lineup, run host-direct rounds and call orchestrator with `--skip-provider <host>` so it runs only the other providers.
 

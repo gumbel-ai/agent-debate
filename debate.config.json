@@ -28,7 +28,7 @@
       "prompt_transport": "arg"
     },
     "gemini": {
-      "name": "Gemini",
+      "name": "Gemini (Auto)",
       "command_template": ["gemini", "-p"],
       "prompt_transport": "arg"
     }

@@ -33,6 +33,7 @@ declare -a AGENT_NAMES=()
 declare -a AGENT_PROVIDERS=()
 HOST_PROVIDER=""
 SKIP_PROVIDER=""
+STATE_FILE=""
 
 cleanup() {
   if [[ -n "${RUNTIME_CONFIG_FILE:-}" && -f "${RUNTIME_CONFIG_FILE:-}" ]]; then
@@ -50,7 +51,7 @@ Start a new debate:
   --topic "question"          The debate topic (required for new debates)
   --files file1 file2 ...     Relevant source files to include as context
   --constraints "text"        Non-negotiable constraints
-  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini:gemini-3,codex,sonnet)
+  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini,codex,sonnet)
   --config path/to/config.json  Agent configuration file (optional)
   --skip-provider name        Skip invoking one provider (claude|codex|gemini) in this run; required when host provider is in lineup
   --rounds N                  Max rounds per agent (default: 3)
@@ -61,6 +62,11 @@ Start a new debate:
 Resume an existing debate:
   --resume path/to/debate.md  Path to existing debate file
   --rounds N                  Additional rounds to run
+
+Exit codes:
+  0  Success (debate completed)
+  1  Failure
+  2  Paused for host-direct turn (missing required host tag)
 
 EOF
   exit 1
@@ -164,7 +170,7 @@ BUILTIN_ALIASES = {
         "prompt_transport": "arg",
     },
     "gemini": {
-        "name": "Gemini",
+        "name": "Gemini (Auto)",
         "provider": "gemini",
         "command_template": ["gemini", "-p"],
         "prompt_transport": "arg",
@@ -383,6 +389,32 @@ has_open_disputes() {
   grep -Eq '^\|.*\|[[:space:]]*OPEN[[:space:]]*\|[[:space:]]*$' "$DEBATE_FILE"
 }
 
+tag_for_turn() {
+  local agent_idx="$1"
+  local round="$2"
+  printf '[A%s-R%s]' "$agent_idx" "$round"
+}
+
+count_tag_in_file() {
+  local file="$1"
+  local tag="$2"
+  local count
+  count=$(grep -oF "$tag" "$file" 2>/dev/null | wc -l || true)
+  count=$(printf '%s' "$count" | tr -d '[:space:]')
+  [[ -z "$count" ]] && count=0
+  printf '%s' "$count"
+}
+
+count_tag_in_text() {
+  local text="$1"
+  local tag="$2"
+  local count
+  count=$(printf '%s' "$text" | grep -oF "$tag" 2>/dev/null | wc -l || true)
+  count=$(printf '%s' "$count" | tr -d '[:space:]')
+  [[ -z "$count" ]] && count=0
+  printf '%s' "$count"
+}
+
 looks_like_debate_file() {
   local content="$1"
   [[ "$content" == *"## Proposal"* ]] \
@@ -390,8 +422,166 @@ looks_like_debate_file() {
     && [[ "$content" == *"| Round | Agent |"* ]]
 }
 
+all_agents_contributed_in_round() {
+  local round="$1"
+  local idx tag
+  for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+    tag=$(tag_for_turn "$idx" "$round")
+    if [[ "$(count_tag_in_file "$DEBATE_FILE" "$tag")" -eq 0 ]]; then
+      return 1
+    fi
+  done
+  return 0
+}
+
 is_converged() {
-  grep -q "STATUS: CONVERGED" "$DEBATE_FILE" && ! has_open_disputes
+  local round="$1"
+  grep -q "STATUS: CONVERGED" "$DEBATE_FILE" \
+    && ! has_open_disputes \
+    && all_agents_contributed_in_round "$round"
+}
+
+state_init() {
+  python3 - "$STATE_FILE" "$DEBATE_FILE" "$HOST_PROVIDER" "$SKIP_PROVIDER" "$AGENT_COUNT" "${AGENT_NAMES[@]}" -- "${AGENT_PROVIDERS[@]}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+state_file = sys.argv[1]
+debate_file = sys.argv[2]
+host_provider = sys.argv[3]
+skip_provider = sys.argv[4]
+agent_count = int(sys.argv[5])
+args = sys.argv[6:]
+sep = args.index("--")
+agent_names = args[:sep]
+agent_providers = args[sep + 1:]
+
+planned_agents = []
+for idx in range(agent_count):
+    planned_agents.append(
+        {
+            "index": idx + 1,
+            "name": agent_names[idx] if idx < len(agent_names) else f"Agent {idx + 1}",
+            "provider": agent_providers[idx] if idx < len(agent_providers) else "",
+        }
+    )
+
+state = {
+    "version": 1,
+    "debate_file": debate_file,
+    "created_at": datetime.now(timezone.utc).isoformat(),
+    "host_provider": host_provider,
+    "skip_provider": skip_provider,
+    "status": "running",
+    "planned_agents": planned_agents,
+    "events": [],
+}
+
+with open(state_file, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
+PY
+}
+
+state_add_event() {
+  local event_type="$1"
+  local round="$2"
+  local agent_idx="$3"
+  local status="$4"
+  local detail="$5"
+  python3 - "$STATE_FILE" "$event_type" "$round" "$agent_idx" "$status" "$detail" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+state_file, event_type, round_s, agent_idx_s, status, detail = sys.argv[1:7]
+
+if os.path.exists(state_file):
+    with open(state_file, "r", encoding="utf-8") as f:
+        state = json.load(f)
+else:
+    state = {"events": [], "status": "running"}
+
+events = state.setdefault("events", [])
+events.append(
+    {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "type": event_type,
+        "round": int(round_s),
+        "agent_index": int(agent_idx_s),
+        "status": status,
+        "detail": detail,
+    }
+)
+
+with open(state_file, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
+PY
+}
+
+state_set_status() {
+  local status="$1"
+  local detail="$2"
+  local round="$3"
+  python3 - "$STATE_FILE" "$status" "$detail" "$round" <<'PY'
+import json
+import os
+import sys
+from datetime import datetime, timezone
+
+state_file, status, detail, round_s = sys.argv[1:5]
+if os.path.exists(state_file):
+    with open(state_file, "r", encoding="utf-8") as f:
+        state = json.load(f)
+else:
+    state = {"events": []}
+
+state["status"] = status
+state["updated_at"] = datetime.now(timezone.utc).isoformat()
+state["last_detail"] = detail
+state["current_round"] = int(round_s)
+
+with open(state_file, "w", encoding="utf-8") as f:
+    json.dump(state, f, indent=2)
+PY
+}
+
+ensure_host_turn_present() {
+  local agent_idx="$1"
+  local round="$2"
+  local tag
+  tag=$(tag_for_turn "$agent_idx" "$round")
+  if [[ "$(count_tag_in_file "$DEBATE_FILE" "$tag")" -eq 0 ]]; then
+    echo "  Host action required: missing $tag for ${AGENT_NAMES[$((agent_idx - 1))]} in Round $round."
+    echo "  Add your host-provider edit in the debate file, then rerun with --resume \"$DEBATE_FILE\"."
+    state_add_event "turn" "$round" "$agent_idx" "pending_host" "Missing required host tag $tag"
+    return 1
+  fi
+  state_add_event "turn" "$round" "$agent_idx" "host_completed" "Found host tag $tag"
+  return 0
+}
+
+verify_round_participation() {
+  local round="$1"
+  local idx tag
+  local missing=""
+  for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+    tag=$(tag_for_turn "$idx" "$round")
+    if [[ "$(count_tag_in_file "$DEBATE_FILE" "$tag")" -eq 0 ]]; then
+      if [[ -z "$missing" ]]; then
+        missing="$tag"
+      else
+        missing="$missing, $tag"
+      fi
+    fi
+  done
+  if [[ -n "$missing" ]]; then
+    echo "  Error: round $round is incomplete. Missing tags: $missing"
+    state_set_status "failed" "Round $round incomplete: missing $missing" "$round"
+    return 1
+  fi
+  return 0
 }
 
 agent_list_text() {
@@ -498,6 +688,9 @@ else
   echo "Created debate file: $DEBATE_FILE"
 fi
 
+STATE_FILE="${DEBATE_FILE%.md}.state.json"
+state_init
+
 # --- Read guardrails ---
 GUARDRAILS_TEXT=$(cat "$GUARDRAILS")
 
@@ -523,6 +716,10 @@ invoke_agent() {
 
   local debate_content
   debate_content=$(cat "$DEBATE_FILE")
+  local required_tag
+  required_tag=$(tag_for_turn "$agent_idx" "$round")
+  local before_tag_count
+  before_tag_count=$(count_tag_in_text "$debate_content" "$required_tag")
 
   # Build prompt: guardrails (with substitutions) + debate file
   local prompt
@@ -614,6 +811,8 @@ PY
   ); then
     rm -f "$prompt_file"
     echo "  Error: $agent_name failed Round $round."
+    state_add_event "turn" "$round" "$agent_idx" "failed" "Agent command failed"
+    state_set_status "failed" "$agent_name failed in round $round" "$round"
     return 1
   fi
 
@@ -630,12 +829,35 @@ PY
         echo "  Hint: in host sessions, use --skip-provider <host> and have the host take its own turns directly."
       fi
       echo "  Raw output saved: $raw_output_file"
+      state_add_event "turn" "$round" "$agent_idx" "failed" "Non-debate output"
+      state_set_status "failed" "$agent_name returned non-debate output in round $round" "$round"
       return 1
     fi
+
+    if [[ "$response" == "$debate_content" ]]; then
+      echo "  Error: $agent_name made no file changes in Round $round."
+      state_add_event "turn" "$round" "$agent_idx" "failed" "No content changes"
+      state_set_status "failed" "$agent_name made no changes in round $round" "$round"
+      return 1
+    fi
+
+    local after_tag_count
+    after_tag_count=$(count_tag_in_text "$response" "$required_tag")
+    if (( after_tag_count <= before_tag_count )); then
+      echo "  Error: $agent_name response missing required turn tag $required_tag."
+      state_add_event "turn" "$round" "$agent_idx" "failed" "Missing required tag $required_tag"
+      state_set_status "failed" "$agent_name missing required tag $required_tag in round $round" "$round"
+      return 1
+    fi
+
     echo "$response" > "$DEBATE_FILE"
     echo "  $agent_name finished Round $round."
+    state_add_event "turn" "$round" "$agent_idx" "completed" "Applied changes with tag $required_tag"
   else
     echo "  Warning: $agent_name returned empty response in Round $round."
+    state_add_event "turn" "$round" "$agent_idx" "failed" "Empty response"
+    state_set_status "failed" "$agent_name returned empty response in round $round" "$round"
+    return 1
   fi
 }
 
@@ -662,32 +884,78 @@ for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
 done
 if [[ "$ACTIVE_AGENT_COUNT" -eq 0 ]]; then
   echo "Error: no runnable agents after applying --skip-provider $SKIP_PROVIDER"
+  state_set_status "failed" "No runnable agents after skip-provider filter" "$CURRENT_ROUND"
   exit 1
 fi
 
+converged=false
 for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
   echo "--- Round $round ---"
+  state_add_event "round_start" "$round" 0 "started" "Round $round started"
+  round_summary="R${round}:"
 
   for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
     provider="${AGENT_PROVIDERS[$((idx - 1))]}"
     if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
-      echo "  Skipping ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
+      echo "  Host-direct turn for ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
+      if ! ensure_host_turn_present "$idx" "$round"; then
+        round_summary="$round_summary A${idx}⏸"
+        echo "  Round paused for host action."
+        echo "  $round_summary"
+        state_set_status "paused_host_turn" "Missing host turn A${idx}-R${round}" "$round"
+        echo ""
+        echo "=== Debate paused ==="
+        echo "  Output: $DEBATE_FILE"
+        echo "  State:  $STATE_FILE"
+        echo "  Add host turn and rerun with --resume \"$DEBATE_FILE\""
+        exit 2
+      fi
+      round_summary="$round_summary A${idx}✅"
       continue
     fi
-    invoke_agent "$idx" "$round"
+    if invoke_agent "$idx" "$round"; then
+      round_summary="$round_summary A${idx}✅"
+    else
+      round_summary="$round_summary A${idx}❌"
+      echo "  $round_summary"
+      echo ""
+      echo "=== Debate failed ==="
+      echo "  Output: $DEBATE_FILE"
+      echo "  State:  $STATE_FILE"
+      exit 1
+    fi
   done
 
-  if is_converged; then
+  if ! verify_round_participation "$round"; then
+    echo "  $round_summary"
+    echo ""
+    echo "=== Debate failed ==="
+    echo "  Output: $DEBATE_FILE"
+    echo "  State:  $STATE_FILE"
+    exit 1
+  fi
+
+  if is_converged "$round"; then
     # All agents see the same file — if STATUS is still CONVERGED after the last agent, they agree
     echo ""
     echo "=== CONVERGED at Round $round ==="
+    echo "  $round_summary"
+    state_set_status "converged" "Converged at round $round" "$round"
+    converged=true
     break
   fi
 
+  echo "  $round_summary"
+  state_add_event "round_end" "$round" 0 "completed" "$round_summary"
   echo ""
 done
+
+if [[ "$converged" != true ]]; then
+  state_set_status "max_rounds_reached" "Reached max rounds without convergence" "$END_ROUND"
+fi
 
 echo ""
 echo "=== Debate complete ==="
 echo "  Output: $DEBATE_FILE"
+echo "  State:  $STATE_FILE"
 echo "  Review the file and make your call."
