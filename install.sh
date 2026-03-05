@@ -67,29 +67,39 @@ claude_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-A structured debate system for Claude and Codex to review each other's work via shared markdown files.
+A structured multi-agent debate system where 2 or 3 AI agents review technical decisions via shared markdown files. Supports Claude, Codex, and Gemini as participants.
 
-### Quick Reference
+### Manual Mode (you are a participant)
 
 When user says **"continue debate N"** or **"respond to debate N"**:
 1. Read `debates/N-*.md` in the current project (the debate file)
 2. Read `~/.claude/agent-debate/agent-guardrails.md` (behavioral rules)
 3. You are the responding agent. Edit the document in-place per the guardrails:
    - Strikethrough + counter for disagreements, not appending below
-   - Tag every edit: `[A1-R2]` (your agent name, round number)
+   - Tag every edit: `[A1-R2]`, `[A2-R1]`, `[A3-R1]` (your agent name, round number)
    - Update the Dispute Log with Status: `OPEN`, `CLOSED`, or `PARKED`
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
-   - **Verify the other agent's claims independently** before accepting. State what you checked and what you found.
+   - **Verify another agent's claims independently** before accepting. State what you checked and what you found.
 4. No code changes unless the debate explicitly allows it
 
 When user says **"start a debate on <topic>"**:
 1. Create a new file in `./debates/` from `~/.claude/agent-debate/TEMPLATE.md`
 2. Auto-number: increment from highest existing `N-` prefix in `./debates/`
 3. You are Agent 1. Write the initial proposal
+4. If only 2 agents, remove the `**Agent 3:**` line from the file
+
+### Auto Mode (orchestrator runs all agents)
+
+When user says **"auto debate"** or asks for an automated multi-agent debate:
+1. Run the orchestrator: `~/.agent-debate/orchestrate.sh` (or the repo copy if available)
+2. Example: `./orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
+3. For 3 agents: `./orchestrate.sh --topic "question" --agents opus,codex,gemini --rounds 2`
+4. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection
 
 ### Key Files
 - `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
 - `~/.claude/agent-debate/TEMPLATE.md` — Template for new debates
+- `~/.agent-debate/config.json` — Agent aliases and defaults
 - `./debates/` — Project-local debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CLAUDE_EOF
@@ -100,27 +110,38 @@ codex_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate via shared markdown files.
+Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, and Gemini as participants.
 
-### When user says "continue debate N" or "respond to debate N":
+### Manual Mode (you are a participant)
+
+When user says "continue debate N" or "respond to debate N":
 1. Read the debate file at `debates/N-*.md` in the current project.
 2. Read the guardrails at `~/.codex/agent-debate/agent-guardrails.md`.
 3. You are the responding agent. Follow the guardrails exactly:
    - Edit the document in-place (strikethrough + counter, not append).
-   - Tag every edit with your agent name and round: `[A2-R1]`.
+   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`.
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
-   - **Verify the other agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
+   - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
 4. Do NOT make code changes unless the debate file explicitly allows it.
 
 ### When user says "start a debate on <topic>":
 1. Create a new debate file in `./debates/` using the template at `~/.codex/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
+4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+
+### Auto Mode (orchestrator runs all agents)
+
+When user says "auto debate" or asks for an automated multi-agent debate:
+1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
+2. For 3 agents: `--agents opus,codex,gemini`
+3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
 
 ### Key files:
 - `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.codex/agent-debate/TEMPLATE.md` — Starting template for new debates
+- `~/.agent-debate/config.json` — Agent aliases and defaults
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CODEX_EOF
@@ -131,27 +152,38 @@ gemini_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Structured multi-agent debate via shared markdown files.
+Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, and Gemini as participants.
 
-### When user says "continue debate N" or "respond to debate N":
+### Manual Mode (you are a participant)
+
+When user says "continue debate N" or "respond to debate N":
 1. Read the debate file at `debates/N-*.md` in the current project.
 2. Read the guardrails at `~/.gemini/agent-debate/agent-guardrails.md`.
 3. You are the responding agent. Follow the guardrails exactly:
    - Edit the document in-place (strikethrough + counter, not append).
-   - Tag every edit with your agent name and round: `[A2-R1]`.
+   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`.
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
-   - **Verify the other agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
+   - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
 4. Do NOT make code changes unless the debate file explicitly allows it.
 
 ### When user says "start a debate on <topic>":
 1. Create a new debate file in `./debates/` using the template at `~/.gemini/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
+4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+
+### Auto Mode (orchestrator runs all agents)
+
+When user says "auto debate" or asks for an automated multi-agent debate:
+1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
+2. For 3 agents: `--agents opus,codex,gemini`
+3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection.
 
 ### Key files:
 - `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.gemini/agent-debate/TEMPLATE.md` — Starting template for new debates
+- `~/.agent-debate/config.json` — Agent aliases and defaults
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 GEMINI_EOF
@@ -244,7 +276,14 @@ install_shared_config() {
   local shared_dir="$HOME/.agent-debate"
   mkdir -p "$shared_dir"
   get_file "debate.config.json" "$shared_dir/config.json"
+  get_file "agent-guardrails.md" "$shared_dir/agent-guardrails.md"
+  get_file "TEMPLATE.md" "$shared_dir/TEMPLATE.md"
+  get_file "orchestrate.sh" "$shared_dir/orchestrate.sh"
+  chmod +x "$shared_dir/orchestrate.sh"
   echo "  $shared_dir/config.json (default config)"
+  echo "  $shared_dir/agent-guardrails.md (auto mode rules)"
+  echo "  $shared_dir/TEMPLATE.md (auto mode template)"
+  echo "  $shared_dir/orchestrate.sh (auto mode)"
 }
 
 uninstall_shared_config() {
@@ -254,6 +293,17 @@ uninstall_shared_config() {
     echo "Shared config:"
     echo "  $shared_dir/ (removed)"
   fi
+}
+
+agent_has_block() {
+  local config_path="$1"
+  [[ -f "$config_path" ]] && grep -q "$SENTINEL_START" "$config_path" 2>/dev/null
+}
+
+any_agent_blocks_installed() {
+  agent_has_block "$HOME/.claude/CLAUDE.md" \
+    || agent_has_block "$HOME/.codex/AGENTS.md" \
+    || agent_has_block "$HOME/.gemini/GEMINI.md"
 }
 
 # --- Main ---
@@ -279,7 +329,16 @@ if [[ "$UNINSTALL" == true ]]; then
     uninstall_agent "Gemini" "$HOME/.gemini" "GEMINI.md"
   fi
 
-  uninstall_shared_config
+  if [[ "$TARGET_AGENT" == "all" ]]; then
+    uninstall_shared_config
+  else
+    if any_agent_blocks_installed; then
+      echo "Shared config:"
+      echo "  $HOME/.agent-debate/ (kept; other agents still installed)"
+    else
+      uninstall_shared_config
+    fi
+  fi
 
   echo ""
   echo "Done."

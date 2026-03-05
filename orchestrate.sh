@@ -9,7 +9,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-DEBATES_DIR="$SCRIPT_DIR/debates"
+PROJECT_DIR="$(pwd)"
+DEBATES_DIR="$PROJECT_DIR/debates"
 GUARDRAILS="$SCRIPT_DIR/agent-guardrails.md"
 TEMPLATE="$SCRIPT_DIR/TEMPLATE.md"
 
