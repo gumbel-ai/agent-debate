@@ -165,7 +165,7 @@ BUILTIN_ALIASES = {
     "codex": {
         "name": "Codex",
         "provider": "codex",
-        "command_template": ["codex", "exec", "-c", "model_reasoning_effort=\"{EFFORT}\""],
+        "command_template": ["codex", "exec", "--skip-git-repo-check", "-c", "model_reasoning_effort=\"{EFFORT}\""],
         "reasoning": {"default": "medium", "allowed": ["low", "medium", "high"]},
         "prompt_transport": "arg",
     },
