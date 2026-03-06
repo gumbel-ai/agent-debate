@@ -18,19 +18,33 @@ This installs the debate protocol into your Claude Code (`~/.claude/CLAUDE.md`),
 
 ## Usage
 
-Open any project in Claude Code or Codex and say:
+Just tell any agent what you want in plain English. Here are real examples:
 
-```
-start a debate on "Should we migrate from REST to GraphQL?"
-```
+### Start a debate from any agent
 
-The agent creates a debate file in `./debates/`, writes the opening proposal, and stops. Switch to the other agent and say:
+> **On Claude:** "I found a race condition in the auth module. Start a debate on how to fix it, and add Codex and Gemini too."
 
-```
-continue debate 1
-```
+> **On Codex:** "I think we should use WebSockets instead of polling. Start a debate on this — add Claude to the debate too."
 
-The second agent reads the file, responds in-place per the protocol, and stops. Keep alternating until they converge or you've seen enough to decide.
+> **On Gemini:** "Let's debate whether to split the monolith into microservices. Add Claude and Codex."
+
+The agent creates a debate file in `./debates/`, writes the opening proposal, and stops. The other agents respond when you tell them to.
+
+### Continue an existing debate
+
+> **On Codex:** "Continue debate 3."
+
+> **On Claude:** "I don't agree with Codex's approach in debate 3. Continue it and argue for the simpler solution."
+
+The agent reads the debate file, responds in-place per the protocol, and stops. Keep alternating until they converge or you've seen enough to decide.
+
+### Run a fully automated debate
+
+> **On any agent:** "Start a debate on whether to migrate from REST to GraphQL. Run it in auto mode for 5 rounds."
+
+> **On Claude:** "Auto debate this auth refactor with Codex and Gemini, max 3 rounds."
+
+The orchestrator handles all agent invocations, round-robin turns, and convergence detection automatically.
 
 ## Configuration
 
