@@ -4,9 +4,37 @@
   <img src="assets/banner.png" alt="agent-debate banner" width="700">
 </p>
 
-A structured protocol for AI coding agents to debate technical decisions via a shared markdown file. Agents edit a living document in-place — strikethrough to disagree, tag every edit, converge or escalate. The human makes the final call.
+AI agents debate your technical decisions — then you make the call.
 
-This is not a chatbot. It's adversarial code review with convergence rules.
+Two or three agents (Claude, Codex, Gemini) edit a shared markdown file in-place. They strikethrough to disagree, cite `file:line` as evidence, track disputes in a log, and must converge or escalate. It's adversarial code review, not a chatbot.
+
+## What a debate looks like
+
+Here's a real excerpt from a [3-agent debate on adding OpenRouter support](debates/1-2026-03-07-how-should-we-add-openrouter-support-to-.md) (Claude vs Codex vs Gemini):
+
+```markdown
+~~Why a wrapper: Dependencies are just `curl` + `jq`, both standard
+on macOS/Linux. [A1-R1]~~
+Wrapper is correct, but `jq` is unnecessary dependency surface for v1.
+Evidence: repo currently has no `jq` dependency, while `python3` is already
+required by orchestrator (`orchestrate.sh:139,445,492,753`). Minimum viable
+should be a Python wrapper using stdlib `json` + `urllib.request`. [A2-R1]
+
+### Claude accepts Codex's corrections [A1-R2]
+
+**Python wrapper over bash+jq:** Codex is right. Verified: `orchestrate.sh`
+already requires `python3` at 4+ callsites. Adding `jq` as a new dependency
+when Python stdlib can do the same job is unnecessary. Conceding. [A1-R2]
+```
+
+Agents propose, disagree with evidence, and concede when wrong. Every claim is grounded in actual code. The [full debate](debates/1-2026-03-07-how-should-we-add-openrouter-support-to-.md) converged in 1 round with all disputes closed.
+
+## Why not just ask one AI?
+
+- **One agent has blind spots.** A second agent catches what the first missed — wrong assumptions, unnecessary dependencies, missing code paths.
+- **Evidence, not vibes.** The protocol forces agents to cite `file:line`, paste log output, and verify each other's claims before agreeing.
+- **Scope creep dies here.** Agents must justify every addition. "Easy to add" is not a reason. Unrelated ideas go to a parking lot.
+- **You decide, they inform.** Agents converge on a recommendation. You pick what ships.
 
 ## Install
 
@@ -14,95 +42,52 @@ This is not a chatbot. It's adversarial code review with convergence rules.
 curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install.sh | bash
 ```
 
-This installs the debate protocol into your Claude Code (`~/.claude/CLAUDE.md`), Codex (`~/.codex/AGENTS.md`), and Gemini (`~/.gemini/GEMINI.md`) global configs, plus a shared config at `~/.agent-debate/config.json`. Install for one agent only with `--agent claude`, `--agent codex`, or `--agent gemini`.
+Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), and [Gemini CLI](https://github.com/google-gemini/gemini-cli). Install for one agent only with `--agent claude`, `--agent codex`, or `--agent gemini`.
 
 ## Usage
 
-Just tell any agent what you want in plain English. Here are real examples:
+Just tell any agent what you want:
 
-### Start a debate from any agent
+```
+"Start a debate on whether to use WebSockets or polling. Add Codex too."
+```
 
-> **On Claude:** "I found a race condition in the auth module. Start a debate on how to fix it, and add Codex and Gemini too."
+```
+"Continue debate 3 — I disagree with Codex's approach, argue for the simpler solution."
+```
 
-> **On Codex:** "I think we should use WebSockets instead of polling. Start a debate on this — add Claude to the debate too."
+```
+"Auto debate this auth refactor with Codex and Gemini, max 3 rounds."
+```
 
-> **On Gemini:** "Let's debate whether to split the monolith into microservices. Add Claude and Codex."
+Two modes:
+- **Manual** — you switch between agent terminals, each takes a turn editing the shared file
+- **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. Use `--skip-provider` if you want to participate as one of the agents yourself
 
-The agent creates a debate file in `./debates/`, writes the opening proposal, and stops. The other agents respond when you tell them to.
+## How it works
 
-### Continue an existing debate
+All agents follow the same [guardrails](agent-guardrails.md):
 
-> **On Codex:** "Continue debate 3."
-
-> **On Claude:** "I don't agree with Codex's approach in debate 3. Continue it and argue for the simpler solution."
-
-The agent reads the debate file, responds in-place per the protocol, and stops. Keep alternating until they converge or you've seen enough to decide.
-
-### Run a fully automated debate
-
-> **On any agent:** "Start a debate on whether to migrate from REST to GraphQL. Run it in auto mode for 5 rounds."
-
-> **On Claude:** "Auto debate this auth refactor with Codex and Gemini, max 3 rounds."
-
-The orchestrator handles all agent invocations, round-robin turns, and convergence detection automatically.
+| Rule | What it means |
+|------|---------------|
+| **Living document** | Agents edit in-place with ~~strikethrough~~ + counter, not append-only chat |
+| **Evidence required** | Every claim must cite file:line, log data, or runtime output inline |
+| **Disputes tracked** | Tabular log with OPEN/CLOSED/PARKED statuses |
+| **Convergence** | All agents must mark `STATUS: CONVERGED`; any can revert to `STATUS: OPEN` |
+| **Scope creep blocked** | New ideas go to Parking Lot unless required for the fix |
 
 ## Configuration
 
-The installer ships a default config at `~/.agent-debate/config.json` with built-in agent aliases:
+Default agents: `opus` (Claude Opus) + `codex` (OpenAI Codex). Built-in aliases:
 
-| Alias | Agent | Transport | Effort support |
-|-------|-------|-----------|----------------|
-| `opus` | Claude Opus | arg | `--effort` (low/medium/high) |
-| `sonnet` | Claude Sonnet | arg | `--effort` (low/medium/high) |
-| `codex` | Codex | arg | `-c model_reasoning_effort` (low/medium/high) |
-| `gemini` | Gemini (auto) | arg | none |
+| Alias | Agent | Effort support |
+|-------|-------|----------------|
+| `opus` | Claude Opus | low/medium/high |
+| `sonnet` | Claude Sonnet | low/medium/high |
+| `codex` | Codex | low/medium/high |
+| `gemini` | Gemini (auto) | — |
 
-Default pair: `opus` + `codex`. Claude and Codex aliases default to `medium` reasoning effort. Gemini CLI has no effort flag. Override per-project by placing a `debate.config.json` in your project root.
-
-### Custom agent pairs
-
-Edit `~/.agent-debate/config.json` to add aliases or change defaults:
-
-```json
-{
-  "aliases": {
-    "opus": {
-      "name": "Opus",
-      "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
-      "reasoning": { "default": "medium", "allowed": ["low", "medium", "high"] },
-      "prompt_transport": "arg"
-    },
-    "codex": {
-      "name": "Codex",
-      "command_template": ["codex", "exec", "-c", "model_reasoning_effort=\"{EFFORT}\""],
-      "reasoning": { "default": "medium", "allowed": ["low", "medium", "high"] },
-      "prompt_transport": "arg"
-    }
-  },
-  "debate": {
-    "default_agents": ["opus", "codex"],
-    "min_agents": 2,
-    "max_agents": 3
-  }
-}
-```
-
-- Gemini alias defaults to CLI auto-routing (Gemini 3 family). You can still try `alias:model` overrides when your local Gemini CLI supports that model ID.
-- `{EFFORT}` in `command_template` gets replaced with `reasoning.default` value.
-- In host sessions, if your own provider is in the lineup, run host-direct rounds and call orchestrator with `--skip-provider <host>` so it runs only the other providers.
-
-3-agent debates are supported. Use `--agents opus,codex,gemini` to include a third agent.
-Use `--skip-provider claude|codex|gemini` for host-direct rounds when that provider is participating in the same host session.
-
-## How It Works
-
-Both agents follow the same [guardrails](agent-guardrails.md) — rules for how to edit the shared document:
-
-- **Living document** — agents edit in-place with strikethrough + counter, not append-only chat
-- **Evidence required** — every claim must cite file:line, log data, or runtime output inline
-- **Disputes tracked** — tabular log with OPEN/CLOSED/PARKED statuses
-- **Convergence** — all agents must mark `STATUS: CONVERGED`; any can revert to `STATUS: OPEN`
-- **Scope creep resistance** — new ideas go to Parking Lot unless required for the fix
+3-agent debates: `--agents opus,codex,gemini`. Override per-project with a `debate.config.json` in your project root. See [config docs](docs/config-design.md) for custom aliases.
 
 ## Uninstall
 
