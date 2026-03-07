@@ -95,6 +95,13 @@ Default agents: `opus` (Claude Opus) + `codex` (OpenAI Codex). Built-in aliases:
 curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install.sh | bash -s -- --uninstall
 ```
 
+## Known limitations
+
+- When running inside a host CLI session (Claude/Codex/Gemini), include `--skip-provider <host>` and take that provider's turns directly in the debate file.
+- This project orchestrates CLIs; reliability depends on local provider CLI behavior, auth state, and model availability.
+- No built-in cost/token accounting yet. If you add paid providers, you need your own usage controls.
+- Auto mode validates structure and tags, but final judgment is still human.
+
 ## License
 
 MIT
