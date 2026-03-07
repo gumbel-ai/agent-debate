@@ -10,7 +10,7 @@ Two or three agents (Claude, Codex, Gemini) edit a shared markdown file in-place
 
 ## What a debate looks like
 
-Here's a real excerpt from a [3-agent debate on adding OpenRouter support](debates/1-2026-03-07-how-should-we-add-openrouter-support-to-.md) (Claude vs Codex vs Gemini):
+Here's a real excerpt from a [3-agent debate on adding OpenRouter support](debates/1-2026-03-07-add-openrouter-support.md) (Claude vs Codex vs Gemini):
 
 ```markdown
 ~~Why a wrapper: Dependencies are just `curl` + `jq`, both standard
@@ -27,7 +27,7 @@ already requires `python3` at 4+ callsites. Adding `jq` as a new dependency
 when Python stdlib can do the same job is unnecessary. Conceding. [A1-R2]
 ```
 
-Agents propose, disagree with evidence, and concede when wrong. Every claim is grounded in actual code. The [full debate](debates/1-2026-03-07-how-should-we-add-openrouter-support-to-.md) converged in 1 round with all disputes closed.
+Agents propose, disagree with evidence, and concede when wrong. Every claim is grounded in actual code. The [full debate](debates/1-2026-03-07-add-openrouter-support.md) converged in 1 round with all disputes closed.
 
 ## Why not just ask one AI?
 
@@ -87,7 +87,7 @@ Default agents: `opus` (Claude Opus) + `codex` (OpenAI Codex). Built-in aliases:
 | `codex` | Codex | low/medium/high |
 | `gemini` | Gemini (auto) | — |
 
-3-agent debates: `--agents opus,codex,gemini`. Override per-project with a `debate.config.json` in your project root. See [config docs](docs/config-design.md) for custom aliases.
+3-agent debates: `--agents opus,codex,gemini`. Override per-project with a `debate.config.json` in your project root. Edit `~/.agent-debate/config.json` to add custom aliases.
 
 ## Uninstall
 
