@@ -64,7 +64,7 @@ Just tell any agent what you want:
 
 Two modes:
 - **Manual** — you switch between agent terminals, each takes a turn editing the shared file
-- **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. By default it then runs an Implementation Plan phase; pass `--no-plan` to skip. Use `--skip-provider` if you want to participate as one of the agents yourself
+- **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. By default it then runs a Plan phase; pass `--no-plan` to skip. Use `--skip-provider` if you want to participate as one of the agents yourself
   Plan controls: `--no-plan` (disable) and `--plan-rounds N` (default: 2).
 
 ## How it works

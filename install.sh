@@ -95,7 +95,7 @@ When user says **"implement debate N"**, **"apply plan for debate N"**, or **"im
 2. Verify readiness before coding:
    - Proposal must be converged (`STATUS: CONVERGED`)
    - Dispute Log must have no `OPEN` rows
-   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`
+   - If `## Plan` exists, require `PLAN_STATUS: CONVERGED`
 3. If plan exists but is not converged, run plan phase first:
    - `./orchestrate.sh --resume "<debate-file>" --plan`
 4. Implement the converged plan/proposal in code now.
@@ -155,7 +155,7 @@ When user says "continue debate N" or "respond to debate N":
 2. Verify readiness before coding:
    - Proposal must be converged (`STATUS: CONVERGED`).
    - Dispute Log must have no `OPEN` rows.
-   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`.
+   - If `## Plan` exists, require `PLAN_STATUS: CONVERGED`.
 3. If plan exists but is not converged, run plan phase first:
    - `./orchestrate.sh --resume "<debate-file>" --plan`
 4. Implement the converged plan/proposal in code now.
@@ -214,7 +214,7 @@ When user says "continue debate N" or "respond to debate N":
 2. Verify readiness before coding:
    - Proposal must be converged (`STATUS: CONVERGED`).
    - Dispute Log must have no `OPEN` rows.
-   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`.
+   - If `## Plan` exists, require `PLAN_STATUS: CONVERGED`.
 3. If plan exists but is not converged, run plan phase first:
    - `./orchestrate.sh --resume "<debate-file>" --plan`
 4. Implement the converged plan/proposal in code now.

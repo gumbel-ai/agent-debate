@@ -60,8 +60,8 @@ Start a new debate:
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
   --agent3 name               Override Agent 3 display name
-  --plan                      Force-enable Implementation Plan phase (default: enabled)
-  --no-plan                   Disable Implementation Plan phase for this run
+  --plan                      Force-enable Plan phase (default: enabled)
+  --no-plan                   Disable Plan phase for this run
   --plan-rounds N             Max plan review rounds (default: 2)
 
 Resume an existing debate:
@@ -458,7 +458,7 @@ path = sys.argv[1]
 with open(path, "r", encoding="utf-8") as f:
     text = f.read()
 
-m = re.search(r"^## Implementation Plan\s*$", text, re.MULTILINE)
+m = re.search(r"^## Plan\s*$", text, re.MULTILINE)
 if not m:
     raise SystemExit(1)
 
@@ -871,13 +871,13 @@ invoke_agent() {
 
 ---
 
-IMPLEMENTATION PLAN PHASE: The debate has converged. Write a concrete implementation plan in the Implementation Plan section. Change PLAN_STATUS from PENDING to OPEN. Include: exact files to change, what to change (with line references), order of operations, and code snippets for non-trivial changes. Tag your edits as [$required_tag]."
+PLAN PHASE: The debate has converged. Write a concrete plan in the Plan section. Change PLAN_STATUS from PENDING to OPEN. Include: exact files to change, what to change (with line references), order of operations, and code snippets for non-trivial changes. Tag your edits as [$required_tag]."
     else
       phase_instruction="
 
 ---
 
-IMPLEMENTATION PLAN PHASE: The debate has converged. Review the Implementation Plan section written by Agent 1. Apply the same guardrails: strikethrough to disagree, evidence required. Check that the plan implements what the debate agreed on. If the plan is correct and complete, mark PLAN_STATUS: CONVERGED. Tag your edits as [$required_tag]."
+PLAN PHASE: The debate has converged. Review the Plan section written by Agent 1. Apply the same guardrails: strikethrough to disagree, evidence required. Check that the plan implements what the debate agreed on. If the plan is correct and complete, mark PLAN_STATUS: CONVERGED. Tag your edits as [$required_tag]."
     fi
   fi
 
@@ -1121,10 +1121,10 @@ if [[ "$converged" != true ]]; then
   state_set_status "max_rounds_reached" "Reached max rounds without convergence" "$END_ROUND"
 fi
 
-# --- Implementation Plan phase ---
+# --- Plan phase ---
 if [[ "$PLAN_MODE" == true && "$converged" == true ]]; then
   echo ""
-  echo "=== CONVERGED — entering Implementation Plan phase ==="
+  echo "=== CONVERGED — entering Plan phase ==="
   state_add_event "plan_phase_start" "$last_completed_round" 0 "started" "Entering plan phase"
 
   plan_converged=false
@@ -1170,7 +1170,7 @@ if [[ "$PLAN_MODE" == true && "$converged" == true ]]; then
 
     if is_plan_converged; then
       echo ""
-      echo "=== Implementation Plan CONVERGED at Round $plan_round ==="
+      echo "=== Plan CONVERGED at Round $plan_round ==="
       echo "  $plan_summary"
       state_set_status "plan_converged" "Plan converged at round $plan_round" "$plan_round"
       plan_converged=true

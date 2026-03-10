@@ -37,12 +37,12 @@ STATUS: OPEN
 
 ---
 
-## Implementation Plan
+## Plan
 
 PLAN_STATUS: PENDING
 
 {This section is populated after the debate converges (when --plan is used).
- Agent 1 writes the initial implementation plan. Other agents review and edit
+ Agent 1 writes the initial plan. Other agents review and edit
  in-place using the same guardrails. The plan must include: files to change,
  order of operations, and concrete code changes.}
 

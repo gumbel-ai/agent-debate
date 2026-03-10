@@ -98,13 +98,13 @@ These rules override all other behavioral rules. Every proposal and counter-prop
 - If you disagree with convergence, change it back to `STATUS: OPEN` and explain why.
 - **You may NOT mark CONVERGED while any dispute in the Dispute Log has Status = `OPEN`.** All disputes must be `CLOSED` or `PARKED` first.
 
-## Implementation Plan Phase (when --plan is used)
+## Plan Phase (when --plan is used)
 
-After the debate converges, you may be asked to write or review an Implementation Plan.
+After the debate converges, you may be asked to write or review a Plan.
 
 ### If you are writing the plan (Agent 1):
 - Change `PLAN_STATUS` from `PENDING` to `OPEN`
-- Fill in the Implementation Plan section with concrete changes
+- Fill in the Plan section with concrete changes
 - Each change must specify: exact file, what to change (with line references), why
 - Include an order of operations — what gets changed first, what depends on what
 - Code snippets are required for non-trivial changes
