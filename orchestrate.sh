@@ -34,6 +34,8 @@ declare -a AGENT_PROVIDERS=()
 HOST_PROVIDER=""
 SKIP_PROVIDER=""
 STATE_FILE=""
+PLAN_MODE=true
+PLAN_ROUNDS=2
 
 cleanup() {
   if [[ -n "${RUNTIME_CONFIG_FILE:-}" && -f "${RUNTIME_CONFIG_FILE:-}" ]]; then
@@ -58,6 +60,9 @@ Start a new debate:
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
   --agent3 name               Override Agent 3 display name
+  --plan                      Force-enable Implementation Plan phase (default: enabled)
+  --no-plan                   Disable Implementation Plan phase for this run
+  --plan-rounds N             Max plan review rounds (default: 2)
 
 Resume an existing debate:
   --resume path/to/debate.md  Path to existing debate file
@@ -86,6 +91,9 @@ while [[ $# -gt 0 ]]; do
     --agent1) AGENT1_OVERRIDE_NAME="$2"; shift 2 ;;
     --agent2) AGENT2_OVERRIDE_NAME="$2"; shift 2 ;;
     --agent3) AGENT3_OVERRIDE_NAME="$2"; shift 2 ;;
+    --plan) PLAN_MODE=true; shift ;;
+    --no-plan) PLAN_MODE=false; shift ;;
+    --plan-rounds) PLAN_ROUNDS="$2"; shift 2 ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
@@ -441,6 +449,37 @@ is_converged() {
     && all_agents_contributed_in_round "$round"
 }
 
+is_plan_converged() {
+  python3 - "$DEBATE_FILE" <<'PY'
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as f:
+    text = f.read()
+
+m = re.search(r"^## Implementation Plan\s*$", text, re.MULTILINE)
+if not m:
+    raise SystemExit(1)
+
+section = text[m.end():]
+m_next = re.search(r"^##\s+", section, re.MULTILINE)
+if m_next:
+    section = section[:m_next.start()]
+
+for line in section.splitlines():
+    line = line.strip()
+    if not line:
+        continue
+    m_status = re.match(r"^PLAN_STATUS:\s*([A-Z_]+)\s*$", line)
+    if m_status:
+        raise SystemExit(0 if m_status.group(1) == "CONVERGED" else 1)
+
+raise SystemExit(1)
+PY
+  [[ $? -eq 0 ]] && ! has_open_disputes
+}
+
 state_init() {
   python3 - "$STATE_FILE" "$DEBATE_FILE" "$HOST_PROVIDER" "$SKIP_PROVIDER" "$AGENT_COUNT" "${AGENT_NAMES[@]}" -- "${AGENT_PROVIDERS[@]}" <<'PY'
 import json
@@ -699,6 +738,7 @@ GUARDRAILS_TEXT=$(cat "$GUARDRAILS")
 invoke_agent() {
   local agent_idx="$1"
   local round="$2"
+  local phase="${3:-debate}"
   local agent_name="${AGENT_NAMES[$((agent_idx - 1))]}"
   local other_names=""
   local idx
@@ -733,8 +773,26 @@ invoke_agent() {
         -e "s|{ROUND}|$round|g" \
         -e "s|{MAX_ROUNDS}|$MAX_ROUNDS|g")
 
-  prompt="$prompt
+  # Add plan-phase instructions if in plan mode
+  local phase_instruction=""
+  if [[ "$phase" == "plan" ]]; then
+    if [[ "$agent_idx" -eq 1 ]]; then
+      phase_instruction="
 
+---
+
+IMPLEMENTATION PLAN PHASE: The debate has converged. Write a concrete implementation plan in the Implementation Plan section. Change PLAN_STATUS from PENDING to OPEN. Include: exact files to change, what to change (with line references), order of operations, and code snippets for non-trivial changes. Tag your edits as [$required_tag]."
+    else
+      phase_instruction="
+
+---
+
+IMPLEMENTATION PLAN PHASE: The debate has converged. Review the Implementation Plan section written by Agent 1. Apply the same guardrails: strikethrough to disagree, evidence required. Check that the plan implements what the debate agreed on. If the plan is correct and complete, mark PLAN_STATUS: CONVERGED. Tag your edits as [$required_tag]."
+    fi
+  fi
+
+  prompt="$prompt
+$phase_instruction
 ---
 
 Below is the current state of the debate file. Edit it according to the guardrails above.
@@ -870,6 +928,11 @@ fi
 if [[ -n "$SKIP_PROVIDER" ]]; then
   echo "  Skip provider: $SKIP_PROVIDER (host-direct turns expected for this provider)"
 fi
+if [[ "$PLAN_MODE" == true ]]; then
+  echo "  Plan phase: enabled (rounds: $PLAN_ROUNDS)"
+else
+  echo "  Plan phase: disabled (--no-plan)"
+fi
 echo ""
 
 END_ROUND=$(( CURRENT_ROUND + MAX_ROUNDS - 1 ))
@@ -889,34 +952,56 @@ if [[ "$ACTIVE_AGENT_COUNT" -eq 0 ]]; then
 fi
 
 converged=false
-for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
-  echo "--- Round $round ---"
-  state_add_event "round_start" "$round" 0 "started" "Round $round started"
-  round_summary="R${round}:"
+last_completed_round=0
+if [[ -n "$RESUME_FILE" && "$PLAN_MODE" == true ]]; then
+  resume_last_round=$((CURRENT_ROUND - 1))
+  if (( resume_last_round >= 1 )) && is_converged "$resume_last_round"; then
+    converged=true
+    last_completed_round="$resume_last_round"
+    echo "Debate already converged at Round $resume_last_round (resume mode)."
+    echo "Skipping additional debate rounds and entering plan phase."
+  fi
+fi
 
-  for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
-    provider="${AGENT_PROVIDERS[$((idx - 1))]}"
-    if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
-      echo "  Host-direct turn for ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
-      if ! ensure_host_turn_present "$idx" "$round"; then
-        round_summary="$round_summary A${idx}⏸"
-        echo "  Round paused for host action."
+if [[ "$converged" != true ]]; then
+  for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
+    echo "--- Round $round ---"
+    state_add_event "round_start" "$round" 0 "started" "Round $round started"
+    round_summary="R${round}:"
+
+    for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+      provider="${AGENT_PROVIDERS[$((idx - 1))]}"
+      if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
+        echo "  Host-direct turn for ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
+        if ! ensure_host_turn_present "$idx" "$round"; then
+          round_summary="$round_summary A${idx}⏸"
+          echo "  Round paused for host action."
+          echo "  $round_summary"
+          state_set_status "paused_host_turn" "Missing host turn A${idx}-R${round}" "$round"
+          echo ""
+          echo "=== Debate paused ==="
+          echo "  Output: $DEBATE_FILE"
+          echo "  State:  $STATE_FILE"
+          echo "  Add host turn and rerun with --resume \"$DEBATE_FILE\""
+          exit 2
+        fi
+        round_summary="$round_summary A${idx}✅"
+        continue
+      fi
+      if invoke_agent "$idx" "$round"; then
+        round_summary="$round_summary A${idx}✅"
+      else
+        round_summary="$round_summary A${idx}❌"
         echo "  $round_summary"
-        state_set_status "paused_host_turn" "Missing host turn A${idx}-R${round}" "$round"
         echo ""
-        echo "=== Debate paused ==="
+        echo "=== Debate failed ==="
         echo "  Output: $DEBATE_FILE"
         echo "  State:  $STATE_FILE"
-        echo "  Add host turn and rerun with --resume \"$DEBATE_FILE\""
-        exit 2
+        exit 1
       fi
-      round_summary="$round_summary A${idx}✅"
-      continue
-    fi
-    if invoke_agent "$idx" "$round"; then
-      round_summary="$round_summary A${idx}✅"
-    else
-      round_summary="$round_summary A${idx}❌"
+    done
+
+    if ! verify_round_participation "$round"; then
       echo "  $round_summary"
       echo ""
       echo "=== Debate failed ==="
@@ -924,34 +1009,92 @@ for (( round=CURRENT_ROUND; round<=END_ROUND; round++ )); do
       echo "  State:  $STATE_FILE"
       exit 1
     fi
+
+    last_completed_round="$round"
+    if is_converged "$round"; then
+      # All agents see the same file — if STATUS is still CONVERGED after the last agent, they agree
+      echo ""
+      echo "=== CONVERGED at Round $round ==="
+      echo "  $round_summary"
+      state_set_status "converged" "Converged at round $round" "$round"
+      converged=true
+      break
+    fi
+
+    echo "  $round_summary"
+    state_add_event "round_end" "$round" 0 "completed" "$round_summary"
+    echo ""
   done
-
-  if ! verify_round_participation "$round"; then
-    echo "  $round_summary"
-    echo ""
-    echo "=== Debate failed ==="
-    echo "  Output: $DEBATE_FILE"
-    echo "  State:  $STATE_FILE"
-    exit 1
-  fi
-
-  if is_converged "$round"; then
-    # All agents see the same file — if STATUS is still CONVERGED after the last agent, they agree
-    echo ""
-    echo "=== CONVERGED at Round $round ==="
-    echo "  $round_summary"
-    state_set_status "converged" "Converged at round $round" "$round"
-    converged=true
-    break
-  fi
-
-  echo "  $round_summary"
-  state_add_event "round_end" "$round" 0 "completed" "$round_summary"
-  echo ""
-done
+fi
 
 if [[ "$converged" != true ]]; then
   state_set_status "max_rounds_reached" "Reached max rounds without convergence" "$END_ROUND"
+fi
+
+# --- Implementation Plan phase ---
+if [[ "$PLAN_MODE" == true && "$converged" == true ]]; then
+  echo ""
+  echo "=== CONVERGED — entering Implementation Plan phase ==="
+  state_add_event "plan_phase_start" "$last_completed_round" 0 "started" "Entering plan phase"
+
+  plan_converged=false
+  plan_start_round=$((last_completed_round + 1))
+  plan_end_round=$((plan_start_round + PLAN_ROUNDS - 1))
+
+  for (( plan_round=plan_start_round; plan_round<=plan_end_round; plan_round++ )); do
+    echo "--- Plan Round $plan_round ---"
+    state_add_event "plan_round_start" "$plan_round" 0 "started" "Plan round $plan_round started"
+    plan_summary="P${plan_round}:"
+
+    for (( idx=1; idx<=AGENT_COUNT; idx++ )); do
+      provider="${AGENT_PROVIDERS[$((idx - 1))]}"
+      if [[ -n "$SKIP_PROVIDER" && "$provider" == "$SKIP_PROVIDER" ]]; then
+        echo "  Host-direct plan turn for ${AGENT_NAMES[$((idx - 1))]} (provider: $provider)."
+        if ! ensure_host_turn_present "$idx" "$plan_round"; then
+          plan_summary="$plan_summary A${idx}⏸"
+          echo "  Plan round paused for host action."
+          echo "  $plan_summary"
+          state_set_status "paused_host_plan_turn" "Missing host plan turn A${idx}-R${plan_round}" "$plan_round"
+          echo ""
+          echo "=== Plan phase paused ==="
+          echo "  Output: $DEBATE_FILE"
+          echo "  State:  $STATE_FILE"
+          echo "  Add host plan turn and rerun with --resume \"$DEBATE_FILE\""
+          exit 2
+        fi
+        plan_summary="$plan_summary A${idx}✅"
+        continue
+      fi
+      if invoke_agent "$idx" "$plan_round" "plan"; then
+        plan_summary="$plan_summary A${idx}✅"
+      else
+        plan_summary="$plan_summary A${idx}❌"
+        echo "  $plan_summary"
+        echo ""
+        echo "=== Plan phase failed ==="
+        echo "  Output: $DEBATE_FILE"
+        echo "  State:  $STATE_FILE"
+        exit 1
+      fi
+    done
+
+    if is_plan_converged; then
+      echo ""
+      echo "=== Implementation Plan CONVERGED at Round $plan_round ==="
+      echo "  $plan_summary"
+      state_set_status "plan_converged" "Plan converged at round $plan_round" "$plan_round"
+      plan_converged=true
+      break
+    fi
+
+    echo "  $plan_summary"
+    state_add_event "plan_round_end" "$plan_round" 0 "completed" "$plan_summary"
+    echo ""
+  done
+
+  if [[ "$plan_converged" != true ]]; then
+    state_set_status "plan_max_rounds" "Plan phase reached max rounds without convergence" "$plan_end_round"
+  fi
 fi
 
 echo ""

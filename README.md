@@ -36,6 +36,8 @@ Agents propose, disagree with evidence, and concede when wrong. Every claim is g
 - **Scope creep dies here.** Agents must justify every addition. "Easy to add" is not a reason. Unrelated ideas go to a parking lot.
 - **You decide, they inform.** Agents converge on a recommendation. You pick what ships.
 
+*10 debates. 12 points to Codex. 9 concessions from Claude. Gemini turned accepted fixes into production-ready plans.*
+
 ## Install
 
 ```bash
@@ -62,7 +64,8 @@ Just tell any agent what you want:
 
 Two modes:
 - **Manual** — you switch between agent terminals, each takes a turn editing the shared file
-- **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. Use `--skip-provider` if you want to participate as one of the agents yourself
+- **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. By default it then runs an Implementation Plan phase; pass `--no-plan` to skip. Use `--skip-provider` if you want to participate as one of the agents yourself
+  Plan controls: `--no-plan` (disable) and `--plan-rounds N` (default: 2).
 
 ## How it works
 

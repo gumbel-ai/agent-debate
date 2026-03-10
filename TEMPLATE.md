@@ -37,6 +37,26 @@ STATUS: OPEN
 
 ---
 
+## Implementation Plan
+
+PLAN_STATUS: PENDING
+
+{This section is populated after the debate converges (when --plan is used).
+ Agent 1 writes the initial implementation plan. Other agents review and edit
+ in-place using the same guardrails. The plan must include: files to change,
+ order of operations, and concrete code changes.}
+
+### Changes
+
+| # | File | What to change | Why |
+|---|------|----------------|-----|
+| | | | |
+
+### Order of Operations
+1. {step}
+
+---
+
 ## Parking Lot
 
 {Related issues noticed during debate that are out of scope.

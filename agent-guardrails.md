@@ -98,6 +98,26 @@ These rules override all other behavioral rules. Every proposal and counter-prop
 - If you disagree with convergence, change it back to `STATUS: OPEN` and explain why.
 - **You may NOT mark CONVERGED while any dispute in the Dispute Log has Status = `OPEN`.** All disputes must be `CLOSED` or `PARKED` first.
 
+## Implementation Plan Phase (when --plan is used)
+
+After the debate converges, you may be asked to write or review an Implementation Plan.
+
+### If you are writing the plan (Agent 1):
+- Change `PLAN_STATUS` from `PENDING` to `OPEN`
+- Fill in the Implementation Plan section with concrete changes
+- Each change must specify: exact file, what to change (with line references), why
+- Include an order of operations — what gets changed first, what depends on what
+- Code snippets are required for non-trivial changes
+- Tag your edits the same way: `[A1-R3]` etc. (round continues from debate)
+
+### If you are reviewing the plan:
+- Same guardrails apply: strikethrough to disagree, evidence required
+- Check: does this plan actually implement what the debate agreed on?
+- Check: are there missing steps, wrong file references, or ordering issues?
+- Mark `PLAN_STATUS: CONVERGED` when you agree the plan is ready to execute
+
+**Important:** Use `PLAN_STATUS` (not `STATUS`) for plan convergence. `STATUS: CONVERGED` is for the debate proposal only.
+
 ## Dispute Status Reference
 
 | Status | Meaning | Can converge? |
