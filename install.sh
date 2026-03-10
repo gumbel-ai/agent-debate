@@ -88,6 +88,22 @@ When user says **"start a debate on <topic>"**:
 3. You are Agent 1. Write the initial proposal
 4. If only 2 agents, remove the `**Agent 3:**` line from the file
 
+When user says **"implement debate N"**, **"apply plan for debate N"**, or **"implement it now"**:
+1. Resolve the target debate file:
+   - If `N` is provided: use `debates/N-*.md`
+   - If user says "implement it now": pick the latest converged debate in `./debates/` (if ambiguous, ask which debate)
+2. Verify readiness before coding:
+   - Proposal must be converged (`STATUS: CONVERGED`)
+   - Dispute Log must have no `OPEN` rows
+   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`
+3. If plan exists but is not converged, run plan phase first:
+   - `./orchestrate.sh --resume "<debate-file>" --plan`
+4. Implement the converged plan/proposal in code now.
+5. After implementation, append an `## Implementation Results` section (or update it) in the debate file with:
+   - Files changed
+   - Commands/tests run
+   - Any deviations from the plan
+
 ### Auto Mode (orchestrator-assisted)
 
 When user says **"auto debate"** or asks for an automated multi-agent debate:
@@ -124,13 +140,29 @@ When user says "continue debate N" or "respond to debate N":
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
-4. Do NOT make code changes unless the debate file explicitly allows it.
+4. Do NOT make code changes unless the debate file explicitly allows it or the user asks to implement a converged debate plan.
 
 ### When user says "start a debate on <topic>":
 1. Create a new debate file in `./debates/` using the template at `~/.codex/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+
+### When user says "implement debate N", "apply plan for debate N", or "implement it now":
+1. Resolve target debate file:
+   - If `N` is provided: use `debates/N-*.md`.
+   - If user says "implement it now": pick the latest converged debate in `./debates/` (if ambiguous, ask which debate).
+2. Verify readiness before coding:
+   - Proposal must be converged (`STATUS: CONVERGED`).
+   - Dispute Log must have no `OPEN` rows.
+   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`.
+3. If plan exists but is not converged, run plan phase first:
+   - `./orchestrate.sh --resume "<debate-file>" --plan`
+4. Implement the converged plan/proposal in code now.
+5. After implementation, append an `## Implementation Results` section (or update it) in the debate file with:
+   - Files changed
+   - Commands/tests run
+   - Any deviations from the plan
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -167,13 +199,29 @@ When user says "continue debate N" or "respond to debate N":
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
-4. Do NOT make code changes unless the debate file explicitly allows it.
+4. Do NOT make code changes unless the debate file explicitly allows it or the user asks to implement a converged debate plan.
 
 ### When user says "start a debate on <topic>":
 1. Create a new debate file in `./debates/` using the template at `~/.gemini/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
 4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+
+### When user says "implement debate N", "apply plan for debate N", or "implement it now":
+1. Resolve target debate file:
+   - If `N` is provided: use `debates/N-*.md`.
+   - If user says "implement it now": pick the latest converged debate in `./debates/` (if ambiguous, ask which debate).
+2. Verify readiness before coding:
+   - Proposal must be converged (`STATUS: CONVERGED`).
+   - Dispute Log must have no `OPEN` rows.
+   - If `## Implementation Plan` exists, require `PLAN_STATUS: CONVERGED`.
+3. If plan exists but is not converged, run plan phase first:
+   - `./orchestrate.sh --resume "<debate-file>" --plan`
+4. Implement the converged plan/proposal in code now.
+5. After implementation, append an `## Implementation Results` section (or update it) in the debate file with:
+   - Files changed
+   - Commands/tests run
+   - Any deviations from the plan
 
 ### Auto Mode (orchestrator-assisted)
 
