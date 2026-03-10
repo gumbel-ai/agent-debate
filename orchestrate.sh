@@ -55,7 +55,8 @@ Start a new debate:
   --constraints "text"        Non-negotiable constraints
   --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini,codex,sonnet)
   --config path/to/config.json  Agent configuration file (optional)
-  --skip-provider name        Skip invoking one provider (claude|codex|gemini) in this run; required when host provider is in lineup
+  --skip-provider name        Skip invoking one provider (claude|codex|gemini|copilot) in this run; required when host provider is in lineup
+                             For Copilot host sessions, set AGENT_DEBATE_HOST_PROVIDER=copilot
   --rounds N                  Max rounds per agent (default: 3)
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
@@ -183,6 +184,12 @@ BUILTIN_ALIASES = {
         "command_template": ["gemini", "-p"],
         "prompt_transport": "arg",
     },
+    "copilot": {
+        "name": "Copilot",
+        "provider": "copilot",
+        "command_template": ["copilot", "-p", "-s", "--yolo", "--no-ask-user", "--output-format", "text"],
+        "prompt_transport": "arg",
+    },
 }
 
 BUILTIN_DEBATE = {
@@ -307,7 +314,7 @@ for token in requested:
 
     if not provider and cmd:
         cmd_base = os.path.basename(cmd[0]).lower()
-        if cmd_base in ("claude", "codex", "gemini"):
+        if cmd_base in ("claude", "codex", "gemini", "copilot"):
             provider = cmd_base
 
     participant_key = (alias, model_value)
@@ -327,7 +334,7 @@ for token in requested:
 if len(unique_participants) < 2:
     fail("need at least two unique participants")
 
-if host_provider in ("claude", "codex", "gemini"):
+if host_provider in ("claude", "codex", "gemini", "copilot"):
     host_count = provider_counts.get(host_provider, 0)
     if host_count > 0 and skip_provider != host_provider:
         fail(
@@ -926,7 +933,7 @@ if not isinstance(command, list) or not command:
     raise SystemExit(1)
 if not provider and isinstance(command[0], str):
     cmd_base = os.path.basename(command[0]).lower()
-    if cmd_base in ("claude", "codex", "gemini"):
+    if cmd_base in ("claude", "codex", "gemini", "copilot"):
         provider = cmd_base
 
 with open(prompt_file, "r", encoding="utf-8") as f:

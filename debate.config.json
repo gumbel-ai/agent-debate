@@ -31,6 +31,12 @@
       "name": "Gemini (Auto)",
       "command_template": ["gemini", "-p"],
       "prompt_transport": "arg"
+    },
+    "copilot": {
+      "name": "Copilot",
+      "provider": "copilot",
+      "command_template": ["copilot", "-p", "-s", "--yolo", "--no-ask-user", "--output-format", "text"],
+      "prompt_transport": "arg"
     }
   },
   "debate": {

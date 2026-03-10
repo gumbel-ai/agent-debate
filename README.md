@@ -6,7 +6,7 @@
 
 AI agents debate your technical decisions — then you make the call.
 
-Two or three agents (Claude, Codex, Gemini) edit a shared markdown file in-place. They strikethrough to disagree, cite `file:line` as evidence, track disputes in a log, and must converge or escalate. It's adversarial code review, not a chatbot.
+Two or three agents (Claude, Codex, Gemini, Copilot) edit a shared markdown file in-place. They strikethrough to disagree, cite `file:line` as evidence, track disputes in a log, and must converge or escalate. It's adversarial code review, not a chatbot.
 
 ## What a debate looks like
 
@@ -44,7 +44,7 @@ Agents propose, disagree with evidence, and concede when wrong. Every claim is g
 curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install.sh | bash
 ```
 
-Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), and [Gemini CLI](https://github.com/google-gemini/gemini-cli). Install for one agent only with `--agent claude`, `--agent codex`, or `--agent gemini`.
+Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and [GitHub Copilot CLI](https://github.com/github/copilot-cli). Install for one agent only with `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent copilot`.
 
 ## Usage
 
@@ -89,8 +89,9 @@ Default agents: `opus` (Claude Opus) + `codex` (OpenAI Codex). Built-in aliases:
 | `sonnet` | Claude Sonnet | low/medium/high |
 | `codex` | Codex | low/medium/high |
 | `gemini` | Gemini (auto) | — |
+| `copilot` | Copilot CLI | — |
 
-3-agent debates: `--agents opus,codex,gemini`. Override per-project with a `debate.config.json` in your project root. Edit `~/.agent-debate/config.json` to add custom aliases.
+3-agent debates: `--agents opus,codex,gemini` (or include Copilot, e.g. `--agents opus,codex,copilot`). Override per-project with a `debate.config.json` in your project root. Edit `~/.agent-debate/config.json` to add custom aliases.
 
 ## Uninstall
 
@@ -101,7 +102,10 @@ curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install
 ## Known limitations
 
 - When running inside a host CLI session (Claude/Codex/Gemini), include `--skip-provider <host>` and take that provider's turns directly in the debate file.
+- For Copilot host sessions, set `AGENT_DEBATE_HOST_PROVIDER=copilot` and use `--skip-provider copilot`.
 - This project orchestrates CLIs; reliability depends on local provider CLI behavior, auth state, and model availability.
+- Copilot CLI auth env precedence: `COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN` (with Copilot Requests permission).
+- Copilot Free tier is 50 premium requests/month; each Copilot turn consumes one request.
 - No built-in cost/token accounting yet. If you add paid providers, you need your own usage controls.
 - Auto mode validates structure and tags, but final judgment is still human.
 

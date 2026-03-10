@@ -6,6 +6,7 @@
 #   ./install.sh --agent claude          # Install for Claude only
 #   ./install.sh --agent codex           # Install for Codex only
 #   ./install.sh --agent gemini          # Install for Gemini only
+#   ./install.sh --agent copilot         # Install shared config for Copilot usage
 #   ./install.sh --uninstall             # Remove from all agents
 #   ./install.sh --uninstall --agent claude
 #
@@ -32,12 +33,20 @@ while [[ $# -gt 0 ]]; do
     --agent) TARGET_AGENT="$2"; shift 2 ;;
     --uninstall) UNINSTALL=true; shift ;;
     -h|--help)
-      sed -n '2,15p' "$0" 2>/dev/null || echo "Usage: install.sh [--agent claude|codex|gemini|all] [--uninstall]"
+      sed -n '2,16p' "$0" 2>/dev/null || echo "Usage: install.sh [--agent claude|codex|gemini|copilot|all] [--uninstall]"
       exit 0
       ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
+
+case "$TARGET_AGENT" in
+  all|claude|codex|gemini|copilot) ;;
+  *)
+    echo "Error: --agent must be one of: claude, codex, gemini, copilot, all"
+    exit 1
+    ;;
+esac
 
 # --- Source detection ---
 # Are we running from a cloned repo or via curl?
@@ -67,7 +76,7 @@ claude_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-A structured multi-agent debate system where 2 or 3 AI agents review technical decisions via shared markdown files. Supports Claude, Codex, and Gemini as participants.
+A structured multi-agent debate system where 2 or 3 AI agents review technical decisions via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -127,7 +136,7 @@ codex_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, and Gemini as participants.
+Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -186,7 +195,7 @@ gemini_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, and Gemini as participants.
+Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -380,6 +389,11 @@ if [[ "$UNINSTALL" == true ]]; then
     uninstall_agent "Gemini" "$HOME/.gemini" "GEMINI.md"
   fi
 
+  if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "copilot" ]]; then
+    echo "Copilot:"
+    echo "  shared config only (no global Copilot instruction file managed)"
+  fi
+
   if [[ "$TARGET_AGENT" == "all" ]]; then
     uninstall_shared_config
   else
@@ -420,6 +434,12 @@ else
     echo "Gemini:"
     install_agent "Gemini" "$HOME/.gemini" "GEMINI.md" "$(gemini_instructions)"
     installed="${installed}Gemini, "
+  fi
+
+  if [[ "$TARGET_AGENT" == "all" || "$TARGET_AGENT" == "copilot" ]]; then
+    echo "Copilot:"
+    echo "  shared config only (no global Copilot instruction file managed)"
+    installed="${installed}Copilot(shared), "
   fi
 
   echo "Shared config:"
