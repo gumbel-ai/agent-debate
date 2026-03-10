@@ -632,6 +632,98 @@ agent_list_text() {
   printf '%s' "$joined"
 }
 
+detect_resume_round() {
+  local debate_file="$1"
+  local state_file_candidate="${debate_file%.md}.state.json"
+  python3 - "$debate_file" "$state_file_candidate" <<'PY'
+import json
+import os
+import re
+import sys
+
+debate_path = os.path.abspath(sys.argv[1])
+state_path = sys.argv[2]
+
+
+def detect_from_state():
+    if not os.path.exists(state_path):
+        return None
+    try:
+        with open(state_path, "r", encoding="utf-8") as f:
+            state = json.load(f)
+    except Exception:
+        return None
+
+    state_debate = state.get("debate_file")
+    if isinstance(state_debate, str) and state_debate.strip():
+        try:
+            if os.path.abspath(os.path.expanduser(state_debate)) != debate_path:
+                return None
+        except Exception:
+            return None
+
+    current_round = state.get("current_round")
+    if not isinstance(current_round, int) or current_round < 1:
+        return None
+
+    status = str(state.get("status", "")).strip().lower()
+    terminal_statuses = {
+        "converged",
+        "max_rounds_reached",
+        "plan_converged",
+        "plan_max_rounds",
+    }
+    if status in terminal_statuses:
+        return current_round + 1
+    return current_round
+
+
+def detect_from_dispute_log():
+    try:
+        with open(debate_path, "r", encoding="utf-8") as f:
+            text = f.read()
+    except Exception:
+        return None
+
+    m = re.search(r"^## Dispute Log\s*$", text, re.MULTILINE)
+    if not m:
+        return None
+    section = text[m.end():]
+    m_next = re.search(r"^##\s+", section, re.MULTILINE)
+    if m_next:
+        section = section[:m_next.start()]
+
+    max_round = 0
+    for raw_line in section.splitlines():
+        line = raw_line.strip()
+        if not line.startswith("|"):
+            continue
+        if line.startswith("| Round ") or line.startswith("|-------"):
+            continue
+        cols = [c.strip() for c in line.strip("|").split("|")]
+        if not cols:
+            continue
+        round_cell = cols[0]
+        m_round = re.match(r"^(?:R)?\s*([0-9]+)\s*$", round_cell, re.IGNORECASE)
+        if not m_round:
+            continue
+        max_round = max(max_round, int(m_round.group(1)))
+
+    if max_round > 0:
+        return max_round + 1
+    return 1
+
+
+resolved = detect_from_state()
+if resolved is None:
+    resolved = detect_from_dispute_log()
+if resolved is None:
+    resolved = 1
+
+print(max(1, int(resolved)))
+PY
+}
+
 resolve_config
 detect_host_provider
 resolve_agents
@@ -663,10 +755,8 @@ if [[ -n "$RESUME_FILE" ]]; then
     exit 1
   fi
   echo "Resuming debate: $DEBATE_FILE"
-  # Detect current round from file
-  CURRENT_ROUND=$(grep -Ec '^\|[[:space:]]*R[0-9]+[[:space:]]*\|' "$DEBATE_FILE" 2>/dev/null || true)
-  [[ -z "$CURRENT_ROUND" ]] && CURRENT_ROUND=0
-  CURRENT_ROUND=$(( (CURRENT_ROUND / AGENT_COUNT) + 1 ))
+  # Detect round from state (preferred) or dispute-log rows.
+  CURRENT_ROUND=$(detect_resume_round "$DEBATE_FILE")
 else
   mkdir -p "$DEBATES_DIR"
   # Auto-increment debate number from existing files (safe when directory is empty)
