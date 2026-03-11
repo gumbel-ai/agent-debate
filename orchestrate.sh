@@ -416,6 +416,135 @@ PY
   AGENT_2="${AGENT_NAMES[1]}"
 }
 
+restore_agents_from_state() {
+  local debate_file="$1"
+  local state_file_candidate="${debate_file%.md}.state.json"
+  if [[ ! -f "$state_file_candidate" ]]; then
+    return 1
+  fi
+
+  RUNTIME_CONFIG_FILE=$(mktemp)
+
+  local restoration_output
+  if ! restoration_output=$(python3 - "$state_file_candidate" "$debate_file" "$RUNTIME_CONFIG_FILE" <<'PY'
+import json
+import os
+import sys
+
+state_path = sys.argv[1]
+debate_path = os.path.abspath(sys.argv[2])
+out_path = sys.argv[3]
+
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+state_debate = state.get("debate_file")
+if isinstance(state_debate, str) and state_debate.strip():
+    if os.path.abspath(os.path.expanduser(state_debate)) != debate_path:
+        raise SystemExit(1)
+
+saved_agents = state.get("resolved_agents")
+if not isinstance(saved_agents, list) or len(saved_agents) < 2:
+    raise SystemExit(1)
+
+restored = []
+for agent in saved_agents:
+    if not isinstance(agent, dict):
+        raise SystemExit(1)
+    name = str(agent.get("name", "")).strip()
+    provider = str(agent.get("provider", "")).strip().lower()
+    command = agent.get("command", [])
+    transport = str(agent.get("prompt_transport", "arg")).strip().lower()
+    if not name:
+        raise SystemExit(1)
+    if not isinstance(command, list) or not command or not all(isinstance(x, str) and x for x in command):
+        raise SystemExit(1)
+    if transport not in ("arg", "stdin"):
+        raise SystemExit(1)
+    restored.append(
+        {
+            "name": name,
+            "provider": provider,
+            "command": command,
+            "prompt_transport": transport,
+        }
+    )
+
+with open(out_path, "w", encoding="utf-8") as f:
+    json.dump({"agents": restored}, f)
+
+print(len(restored))
+for agent in restored:
+    print(f"{agent['name']}\t{agent.get('provider', '')}")
+PY
+  ); then
+    rm -f "$RUNTIME_CONFIG_FILE"
+    RUNTIME_CONFIG_FILE=""
+    return 1
+  fi
+
+  local restored_lines=()
+  local line
+  while IFS= read -r line; do
+    restored_lines+=("$line")
+  done <<< "$restoration_output"
+
+  if [[ ${#restored_lines[@]} -lt 2 ]]; then
+    rm -f "$RUNTIME_CONFIG_FILE"
+    RUNTIME_CONFIG_FILE=""
+    return 1
+  fi
+
+  AGENT_COUNT="${restored_lines[0]}"
+  AGENT_NAMES=()
+  AGENT_PROVIDERS=()
+  local i restored_name restored_provider
+  for (( i=1; i<${#restored_lines[@]}; i++ )); do
+    IFS=$'\t' read -r restored_name restored_provider <<< "${restored_lines[$i]}"
+    if [[ -z "$restored_name" ]]; then
+      rm -f "$RUNTIME_CONFIG_FILE"
+      RUNTIME_CONFIG_FILE=""
+      return 1
+    fi
+    AGENT_NAMES+=("$restored_name")
+    AGENT_PROVIDERS+=("$restored_provider")
+  done
+
+  if [[ "${#AGENT_NAMES[@]}" -ne "$AGENT_COUNT" ]]; then
+    rm -f "$RUNTIME_CONFIG_FILE"
+    RUNTIME_CONFIG_FILE=""
+    return 1
+  fi
+  if [[ "${#AGENT_PROVIDERS[@]}" -ne "$AGENT_COUNT" ]]; then
+    rm -f "$RUNTIME_CONFIG_FILE"
+    RUNTIME_CONFIG_FILE=""
+    return 1
+  fi
+
+  AGENT_1="${AGENT_NAMES[0]}"
+  AGENT_2="${AGENT_NAMES[1]}"
+  return 0
+}
+
+validate_host_provider_skip() {
+  if [[ "$HOST_PROVIDER" != "claude" && "$HOST_PROVIDER" != "codex" && "$HOST_PROVIDER" != "gemini" && "$HOST_PROVIDER" != "copilot" ]]; then
+    return
+  fi
+
+  local host_count=0
+  local provider
+  for provider in "${AGENT_PROVIDERS[@]}"; do
+    if [[ "$provider" == "$HOST_PROVIDER" ]]; then
+      host_count=$((host_count + 1))
+    fi
+  done
+
+  if [[ "$host_count" -gt 0 && "$SKIP_PROVIDER" != "$HOST_PROVIDER" ]]; then
+    echo "Error: host session '$HOST_PROVIDER' includes $host_count alias(es) from the host provider. Use --skip-provider $HOST_PROVIDER so the host can take its own turns directly while orchestrator runs other providers."
+    exit 1
+  fi
+}
+
 guardrails_support_agent_count() {
   local count="$1"
   grep -q "{OTHER_AGENTS}" "$GUARDRAILS" || return 1
@@ -521,8 +650,9 @@ PY
 }
 
 state_init() {
-  python3 - "$STATE_FILE" "$DEBATE_FILE" "$HOST_PROVIDER" "$SKIP_PROVIDER" "$AGENT_COUNT" "${AGENT_NAMES[@]}" -- "${AGENT_PROVIDERS[@]}" <<'PY'
+  python3 - "$STATE_FILE" "$DEBATE_FILE" "$HOST_PROVIDER" "$SKIP_PROVIDER" "$RUNTIME_CONFIG_FILE" "$AGENT_COUNT" "${AGENT_NAMES[@]}" -- "${AGENT_PROVIDERS[@]}" <<'PY'
 import json
+import os
 import sys
 from datetime import datetime, timezone
 
@@ -530,8 +660,9 @@ state_file = sys.argv[1]
 debate_file = sys.argv[2]
 host_provider = sys.argv[3]
 skip_provider = sys.argv[4]
-agent_count = int(sys.argv[5])
-args = sys.argv[6:]
+runtime_config_file = sys.argv[5]
+agent_count = int(sys.argv[6])
+args = sys.argv[7:]
 sep = args.index("--")
 agent_names = args[:sep]
 agent_providers = args[sep + 1:]
@@ -554,8 +685,42 @@ state = {
     "skip_provider": skip_provider,
     "status": "running",
     "planned_agents": planned_agents,
+    "resolved_agents": [],
     "events": [],
 }
+
+if runtime_config_file and os.path.exists(runtime_config_file):
+    try:
+        with open(runtime_config_file, "r", encoding="utf-8") as f:
+            runtime_cfg = json.load(f)
+        runtime_agents = runtime_cfg.get("agents", [])
+        if isinstance(runtime_agents, list):
+            normalized = []
+            for agent in runtime_agents:
+                if not isinstance(agent, dict):
+                    continue
+                name = str(agent.get("name", "")).strip()
+                provider = str(agent.get("provider", "")).strip().lower()
+                command = agent.get("command", [])
+                transport = str(agent.get("prompt_transport", "arg")).strip().lower()
+                if (
+                    name
+                    and isinstance(command, list)
+                    and command
+                    and all(isinstance(x, str) and x for x in command)
+                    and transport in ("arg", "stdin")
+                ):
+                    normalized.append(
+                        {
+                            "name": name,
+                            "provider": provider,
+                            "command": command,
+                            "prompt_transport": transport,
+                        }
+                    )
+            state["resolved_agents"] = normalized
+    except Exception:
+        pass
 
 with open(state_file, "w", encoding="utf-8") as f:
     json.dump(state, f, indent=2)
@@ -766,7 +931,16 @@ PY
 
 resolve_config
 detect_host_provider
-resolve_agents
+if [[ -n "$RESUME_FILE" && -z "$AGENTS_SPEC" ]]; then
+  if restore_agents_from_state "$RESUME_FILE"; then
+    echo "Restoring agent lineup from state file for resume."
+  else
+    resolve_agents
+  fi
+else
+  resolve_agents
+fi
+validate_host_provider_skip
 
 if [[ -n "$AGENT1_OVERRIDE_NAME" ]]; then
   AGENT_NAMES[0]="$AGENT1_OVERRIDE_NAME"
