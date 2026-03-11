@@ -341,7 +341,7 @@ for token in requested:
         if cmd_base in ("claude", "codex", "gemini", "copilot"):
             provider = cmd_base
 
-    participant_key = (alias, model_value)
+    participant_key = (provider, tuple(cmd), transport)
     unique_participants.add(participant_key)
 
     resolved.append(
