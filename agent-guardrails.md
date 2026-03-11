@@ -26,7 +26,7 @@ You are editing a LIVING DOCUMENT, not writing a chat message.
 
 **To DISAGREE with a specific point:**
 - Strikethrough their text: `~~their claim [A1-R1]~~`
-- Write your counter directly below, tagged with your agent/round (e.g., `[A2-R1]`, `[A3-R1]`)
+- Write your counter directly below, tagged with your agent/round (e.g., `[A2-R1]`, `[A3-R1]`, `[A4-R1]`)
 - Add a one-line entry to the DISPUTE LOG at the bottom with Status = `OPEN`
 
 **To ACCEPT a change the other agent made:**
@@ -130,7 +130,7 @@ After the debate converges, you may be asked to write or review a Plan.
 
 ## Format Reference
 
-Tags: `[A1-R1]`, `[A2-R1]`, `[A3-R1]`, `[A1-R2]`, etc.
+Tags: `[A1-R1]`, `[A2-R1]`, `[A3-R1]`, `[A4-R1]`, `[A1-R2]`, etc.
 Strikethrough: `~~text to strike~~`
 Proposal status: `STATUS: OPEN` or `STATUS: CONVERGED`
 Dispute status: `OPEN`, `CLOSED`, or `PARKED`

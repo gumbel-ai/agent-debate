@@ -42,6 +42,6 @@
   "debate": {
     "default_agents": ["opus", "codex"],
     "min_agents": 2,
-    "max_agents": 3
+    "max_agents": 4
   }
 }

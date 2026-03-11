@@ -6,7 +6,7 @@
 
 AI agents debate your technical decisions — then you make the call.
 
-Two or three agents (Claude, Codex, Gemini, Copilot) edit a shared markdown file in-place. They strikethrough to disagree, cite `file:line` as evidence, track disputes in a log, and must converge or escalate. It's adversarial code review, not a chatbot.
+Two to four agents (Claude, Codex, Gemini, Copilot) edit a shared markdown file in-place. They strikethrough to disagree, cite `file:line` as evidence, track disputes in a log, and must converge or escalate. It's adversarial code review, not a chatbot.
 
 ## What a debate looks like
 
@@ -92,7 +92,8 @@ Default agents: `opus` (Claude Opus) + `codex` (OpenAI Codex). Built-in aliases:
 | `gemini` | Gemini (auto) | — |
 | `copilot` | Copilot CLI | — |
 
-3-agent debates: `--agents opus,codex,gemini` (or include Copilot, e.g. `--agents opus,codex,copilot`). Override per-project with a `debate.config.json` in your project root. Edit `~/.agent-debate/config.json` to add custom aliases.
+3-agent debates: `--agents opus,codex,gemini`. 4-agent debates: `--agents opus,codex,gemini,copilot`.  
+Agent count limits come from `debate.max_agents` in config (default in this repo: 4). Override per-project with a `debate.config.json` in your project root. Edit `~/.agent-debate/config.json` to add custom aliases or adjust min/max agent limits.
 
 ## Uninstall
 

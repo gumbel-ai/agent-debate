@@ -25,6 +25,7 @@ AGENT_2="Codex"
 AGENT1_OVERRIDE_NAME=""
 AGENT2_OVERRIDE_NAME=""
 AGENT3_OVERRIDE_NAME=""
+AGENT4_OVERRIDE_NAME=""
 CONFIG_FILE=""
 AGENTS_SPEC=""
 RUNTIME_CONFIG_FILE=""
@@ -53,7 +54,7 @@ Start a new debate:
   --topic "question"          The debate topic (required for new debates)
   --files file1 file2 ...     Relevant source files to include as context
   --constraints "text"        Non-negotiable constraints
-  --agents a,b[,c]            Agent aliases/models (e.g. opus,codex or gemini,codex,sonnet)
+  --agents a,b[,c[,d...]]     Agent aliases/models (e.g. opus,codex or gemini,codex,sonnet,copilot)
   --config path/to/config.json  Agent configuration file (optional)
   --skip-provider name        Skip invoking one provider (claude|codex|gemini|copilot) in this run; required when host provider is in lineup
                              For Copilot host sessions, set AGENT_DEBATE_HOST_PROVIDER=copilot
@@ -61,6 +62,7 @@ Start a new debate:
   --agent1 name               Override Agent 1 display name
   --agent2 name               Override Agent 2 display name
   --agent3 name               Override Agent 3 display name
+  --agent4 name               Override Agent 4 display name
   --plan                      Force-enable Plan phase (default: enabled)
   --no-plan                   Disable Plan phase for this run
   --plan-rounds N             Max plan review rounds (default: 2)
@@ -92,6 +94,7 @@ while [[ $# -gt 0 ]]; do
     --agent1) AGENT1_OVERRIDE_NAME="$2"; shift 2 ;;
     --agent2) AGENT2_OVERRIDE_NAME="$2"; shift 2 ;;
     --agent3) AGENT3_OVERRIDE_NAME="$2"; shift 2 ;;
+    --agent4) AGENT4_OVERRIDE_NAME="$2"; shift 2 ;;
     --plan) PLAN_MODE=true; shift ;;
     --no-plan) PLAN_MODE=false; shift ;;
     --plan-rounds) PLAN_ROUNDS="$2"; shift 2 ;;
@@ -195,7 +198,7 @@ BUILTIN_ALIASES = {
 BUILTIN_DEBATE = {
     "default_agents": ["opus", "codex"],
     "min_agents": 2,
-    "max_agents": 3,
+    "max_agents": 4,
 }
 
 def fail(msg: str) -> None:
@@ -218,7 +221,7 @@ if config_path:
 
     default_agents = debate.get("default_agents")
     min_agents = debate.get("min_agents", 2)
-    max_agents = debate.get("max_agents", 3)
+    max_agents = debate.get("max_agents", BUILTIN_DEBATE["max_agents"])
 else:
     aliases = BUILTIN_ALIASES
     default_agents = BUILTIN_DEBATE["default_agents"]
@@ -413,8 +416,16 @@ PY
   AGENT_2="${AGENT_NAMES[1]}"
 }
 
-guardrails_support_three_agents() {
-  grep -q "{OTHER_AGENTS}" "$GUARDRAILS" && grep -q "\[A3-R1\]" "$GUARDRAILS"
+guardrails_support_agent_count() {
+  local count="$1"
+  grep -q "{OTHER_AGENTS}" "$GUARDRAILS" || return 1
+  if (( count >= 3 )); then
+    grep -q "\[A3-R1\]" "$GUARDRAILS" || return 1
+  fi
+  if (( count >= 4 )); then
+    grep -q "\[A4-R1\]" "$GUARDRAILS" || return 1
+  fi
+  return 0
 }
 
 escape_for_sed() {
@@ -766,12 +777,15 @@ fi
 if [[ -n "$AGENT3_OVERRIDE_NAME" && "$AGENT_COUNT" -ge 3 ]]; then
   AGENT_NAMES[2]="$AGENT3_OVERRIDE_NAME"
 fi
+if [[ -n "$AGENT4_OVERRIDE_NAME" && "$AGENT_COUNT" -ge 4 ]]; then
+  AGENT_NAMES[3]="$AGENT4_OVERRIDE_NAME"
+fi
 
 AGENT_1="${AGENT_NAMES[0]}"
 AGENT_2="${AGENT_NAMES[1]}"
 
-if [[ "$AGENT_COUNT" -eq 3 ]] && ! guardrails_support_three_agents; then
-  echo "Error: 3-agent debate requires guardrails v2"
+if (( AGENT_COUNT >= 3 )) && ! guardrails_support_agent_count "$AGENT_COUNT"; then
+  echo "Error: guardrails file does not support ${AGENT_COUNT}-agent debates"
   exit 1
 fi
 
@@ -833,14 +847,23 @@ else
     -e "s|{ANY_CONSTRAINTS_OR_NON_NEGOTIABLES}|$CONSTRAINT_TEXT|g" \
     "$TEMPLATE" > "$DEBATE_FILE"
 
-  # Handle Agent 3: substitute or remove the placeholder line
+  # Handle Agent 3/4 placeholders: substitute when present, remove when not.
   tmp_debate=""
   tmp_debate=$(mktemp)
+  cp "$DEBATE_FILE" "$tmp_debate"
+
   if [[ "$AGENT_COUNT" -ge 3 ]]; then
-    sed "s|{AGENT_3_NAME}|${AGENT_NAMES[2]}|g" "$DEBATE_FILE" > "$tmp_debate"
+    sed -i.bak "s|{AGENT_3_NAME}|${AGENT_NAMES[2]}|g" "$tmp_debate" && rm -f "${tmp_debate}.bak"
   else
-    sed '/{AGENT_3_NAME}/d' "$DEBATE_FILE" > "$tmp_debate"
+    sed -i.bak '/{AGENT_3_NAME}/d' "$tmp_debate" && rm -f "${tmp_debate}.bak"
   fi
+
+  if [[ "$AGENT_COUNT" -ge 4 ]]; then
+    sed -i.bak "s|{AGENT_4_NAME}|${AGENT_NAMES[3]}|g" "$tmp_debate" && rm -f "${tmp_debate}.bak"
+  else
+    sed -i.bak '/{AGENT_4_NAME}/d' "$tmp_debate" && rm -f "${tmp_debate}.bak"
+  fi
+
   mv "$tmp_debate" "$DEBATE_FILE"
 
   echo "Created debate file: $DEBATE_FILE"

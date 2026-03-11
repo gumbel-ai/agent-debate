@@ -4,6 +4,7 @@
 **Agent 1:** {AGENT_1_NAME}
 **Agent 2:** {AGENT_2_NAME}
 **Agent 3:** {AGENT_3_NAME}
+**Agent 4:** {AGENT_4_NAME}
 **Max Rounds:** {MAX_ROUNDS}
 **Status:** OPEN
 

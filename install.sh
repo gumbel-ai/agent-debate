@@ -76,7 +76,7 @@ claude_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-A structured multi-agent debate system where 2 or 3 AI agents review technical decisions via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
+A structured multi-agent debate system where 2 to 4 AI agents review technical decisions via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -85,7 +85,7 @@ When user says **"continue debate N"** or **"respond to debate N"**:
 2. Read `~/.claude/agent-debate/agent-guardrails.md` (behavioral rules)
 3. You are the responding agent. Edit the document in-place per the guardrails:
    - Strikethrough + counter for disagreements, not appending below
-   - Tag every edit: `[A1-R2]`, `[A2-R1]`, `[A3-R1]` (your agent name, round number)
+   - Tag every edit: `[A1-R2]`, `[A2-R1]`, `[A3-R1]`, `[A4-R1]` (your agent name, round number)
    - Update the Dispute Log with Status: `OPEN`, `CLOSED`, or `PARKED`
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found.
@@ -95,7 +95,7 @@ When user says **"start a debate on <topic>"**:
 1. Create a new file in `./debates/` from `~/.claude/agent-debate/TEMPLATE.md`
 2. Auto-number: increment from highest existing `N-` prefix in `./debates/`
 3. You are Agent 1. Write the initial proposal
-4. If only 2 agents, remove the `**Agent 3:**` line from the file
+4. If fewer than 4 agents, remove unused `**Agent 3:**` / `**Agent 4:**` lines from the file
 
 When user says **"implement debate N"**, **"apply plan for debate N"**, or **"implement it now"**:
 1. Resolve the target debate file:
@@ -118,7 +118,7 @@ When user says **"implement debate N"**, **"apply plan for debate N"**, or **"im
 When user says **"auto debate"** or asks for an automated multi-agent debate:
 1. Run the orchestrator: `~/.agent-debate/orchestrate.sh` (or the repo copy if available)
 2. Example: `./orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
-3. For 3 agents: `./orchestrate.sh --topic "question" --agents opus,codex,gemini --rounds 2`
+3. For 3 or 4 agents: `./orchestrate.sh --topic "question" --agents opus,codex,gemini,copilot --rounds 2`
 4. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
 5. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Claude example: `--skip-provider claude`).
 
@@ -136,7 +136,7 @@ codex_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
+Multi-agent technical debate (2 to 4 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -145,7 +145,7 @@ When user says "continue debate N" or "respond to debate N":
 2. Read the guardrails at `~/.codex/agent-debate/agent-guardrails.md`.
 3. You are the responding agent. Follow the guardrails exactly:
    - Edit the document in-place (strikethrough + counter, not append).
-   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`.
+   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`, `[A4-R1]`.
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
@@ -155,7 +155,7 @@ When user says "continue debate N" or "respond to debate N":
 1. Create a new debate file in `./debates/` using the template at `~/.codex/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
-4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+4. If fewer than 4 agents, remove unused `**Agent 3:**` / `**Agent 4:**` lines from the file.
 
 ### When user says "implement debate N", "apply plan for debate N", or "implement it now":
 1. Resolve target debate file:
@@ -177,7 +177,7 @@ When user says "continue debate N" or "respond to debate N":
 
 When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
-2. For 3 agents: `--agents opus,codex,gemini`
+2. For 3 or 4 agents: `--agents opus,codex,gemini,copilot`
 3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
 4. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Codex example: `--skip-provider codex`).
 
@@ -195,7 +195,7 @@ gemini_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
+Multi-agent technical debate (2 to 4 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -204,7 +204,7 @@ When user says "continue debate N" or "respond to debate N":
 2. Read the guardrails at `~/.gemini/agent-debate/agent-guardrails.md`.
 3. You are the responding agent. Follow the guardrails exactly:
    - Edit the document in-place (strikethrough + counter, not append).
-   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`.
+   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`, `[A4-R1]`.
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
@@ -214,7 +214,7 @@ When user says "continue debate N" or "respond to debate N":
 1. Create a new debate file in `./debates/` using the template at `~/.gemini/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
-4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+4. If fewer than 4 agents, remove unused `**Agent 3:**` / `**Agent 4:**` lines from the file.
 
 ### When user says "implement debate N", "apply plan for debate N", or "implement it now":
 1. Resolve target debate file:
@@ -236,7 +236,7 @@ When user says "continue debate N" or "respond to debate N":
 
 When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
-2. For 3 agents: `--agents opus,codex,gemini`
+2. For 3 or 4 agents: `--agents opus,codex,gemini,copilot`
 3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
 4. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Gemini example: `--skip-provider gemini`).
 
@@ -254,7 +254,7 @@ copilot_instructions() {
 <!-- agent-debate:start -->
 ## Agent Debate System
 
-Multi-agent technical debate (2 or 3 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
+Multi-agent technical debate (2 to 4 agents) via shared markdown files. Supports Claude, Codex, Gemini, and Copilot as participants.
 
 ### Manual Mode (you are a participant)
 
@@ -263,7 +263,7 @@ When user says "continue debate N" or "respond to debate N":
 2. Read the guardrails at `~/.copilot/agent-debate/agent-guardrails.md`.
 3. You are the responding agent. Follow the guardrails exactly:
    - Edit the document in-place (strikethrough + counter, not append).
-   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`.
+   - Tag every edit with your agent name and round: `[A2-R1]`, `[A3-R1]`, `[A4-R1]`.
    - Update the Dispute Log table with a Status per row (`OPEN`, `CLOSED`, `PARKED`).
    - **Every problem and solution must include inline evidence** (log counts, file:line, actual vs expected values). No evidence = parking lot.
    - **Verify another agent's claims independently** before accepting. State what you checked and what you found. Do not take claims at face value.
@@ -273,7 +273,7 @@ When user says "continue debate N" or "respond to debate N":
 1. Create a new debate file in `./debates/` using the template at `~/.copilot/agent-debate/TEMPLATE.md`.
 2. Auto-number: find the highest `N-` prefix in existing files and increment.
 3. You are Agent 1. Write the initial proposal in the Proposal section.
-4. If only 2 agents, remove the `**Agent 3:**` line from the file.
+4. If fewer than 4 agents, remove unused `**Agent 3:**` / `**Agent 4:**` lines from the file.
 
 ### When user says "implement debate N", "apply plan for debate N", or "implement it now":
 1. Resolve target debate file:
@@ -295,7 +295,7 @@ When user says "continue debate N" or "respond to debate N":
 
 When user says "auto debate" or asks for an automated multi-agent debate:
 1. Run: `~/.agent-debate/orchestrate.sh --topic "question" --agents opus,codex --rounds 3`
-2. For 3 agents: `--agents opus,codex,gemini`
+2. For 3 or 4 agents: `--agents opus,codex,gemini,copilot`
 3. The orchestrator handles round-robin invocation, guardrail injection, and convergence detection for agents it invokes.
 4. If your own provider is in the lineup, run host-direct rounds: write your turn directly, then run orchestrator for the other providers with `--skip-provider` for your host (Copilot example: `--skip-provider copilot`).
 
