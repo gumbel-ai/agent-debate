@@ -35,7 +35,7 @@
     "copilot": {
       "name": "Copilot",
       "provider": "copilot",
-      "command_template": ["copilot", "-p", "-s", "--yolo", "--no-ask-user", "--output-format", "text"],
+      "command_template": ["copilot", "-s", "--yolo", "--no-ask-user", "--model", "gpt-5-mini", "--output-format", "json", "-p"],
       "prompt_transport": "arg"
     }
   },

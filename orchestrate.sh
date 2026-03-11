@@ -187,7 +187,7 @@ BUILTIN_ALIASES = {
     "copilot": {
         "name": "Copilot",
         "provider": "copilot",
-        "command_template": ["copilot", "-p", "-s", "--yolo", "--no-ask-user", "--output-format", "text"],
+        "command_template": ["copilot", "-s", "--yolo", "--no-ask-user", "--model", "gpt-5-mini", "--output-format", "json", "-p"],
         "prompt_transport": "arg",
     },
 }
@@ -432,7 +432,8 @@ count_tag_in_text() {
 
 looks_like_debate_file() {
   local content="$1"
-  [[ "$content" == *"## Proposal"* ]] \
+  [[ "$content" =~ ^[[:space:]]*#\ Debate: ]] \
+    && [[ "$content" == *"## Proposal"* ]] \
     && [[ "$content" == *"## Dispute Log"* ]] \
     && [[ "$content" == *"| Round | Agent |"* ]]
 }
@@ -837,6 +838,7 @@ invoke_agent() {
   local round="$2"
   local phase="${3:-debate}"
   local agent_name="${AGENT_NAMES[$((agent_idx - 1))]}"
+  local agent_provider="${AGENT_PROVIDERS[$((agent_idx - 1))]}"
   local other_names=""
   local idx
 
@@ -888,12 +890,27 @@ PLAN PHASE: The debate has converged. Review the Plan section written by Agent 1
     fi
   fi
 
+  local provider_instruction=""
+  if [[ "$agent_provider" == "copilot" ]]; then
+    provider_instruction="
+
+---
+
+COPILOT OUTPUT CONTRACT (STRICT):
+- Your FIRST output character must be '#' from the line '# Debate:'.
+- Do not include any lead-in text (for example: explanations, plans, or \"let me\" statements).
+- Do not wrap the document in code fences.
+- Return only the full updated debate file content."
+  fi
+
   prompt="$prompt
 $phase_instruction
+$provider_instruction
 ---
 
 Below is the current state of the debate file. Edit it according to the guardrails above.
-Return ONLY the updated debate file content (the full file, with your edits applied).
+
+CRITICAL: Return ONLY the complete updated debate file. No preamble, no summary, no commentary, no code fences. Your entire response must be the full markdown file starting with the heading and ending with the Dispute Log table. Any text outside the debate file content will cause a parsing failure.
 
 ---
 
@@ -961,7 +978,101 @@ if result.returncode != 0:
         sys.stderr.write(result.stderr)
     raise SystemExit(result.returncode)
 
-sys.stdout.write(result.stdout)
+output = result.stdout
+
+if provider == "copilot":
+    raw = output.strip()
+
+    def first_nonempty_string(*values):
+        for value in values:
+            if isinstance(value, str) and value.strip():
+                return value
+        return None
+
+    def extract_assistant_content(payload):
+        if not isinstance(payload, dict):
+            return None
+
+        if payload.get("type") == "assistant.message":
+            data = payload.get("data")
+            if isinstance(data, dict):
+                return first_nonempty_string(data.get("content"), data.get("text"))
+
+        role = str(payload.get("role", "")).strip().lower()
+        if role == "assistant":
+            return first_nonempty_string(payload.get("content"), payload.get("text"))
+
+        message = payload.get("message")
+        if isinstance(message, dict):
+            message_role = str(message.get("role", "")).strip().lower()
+            if message_role == "assistant":
+                return first_nonempty_string(message.get("content"), message.get("text"))
+
+        choices = payload.get("choices")
+        if isinstance(choices, list):
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                choice_message = choice.get("message")
+                if isinstance(choice_message, dict):
+                    choice_role = str(choice_message.get("role", "")).strip().lower()
+                    if choice_role == "assistant":
+                        content = first_nonempty_string(choice_message.get("content"), choice_message.get("text"))
+                        if content:
+                            return content
+
+        messages = payload.get("messages")
+        if isinstance(messages, list):
+            for msg in reversed(messages):
+                if not isinstance(msg, dict):
+                    continue
+                msg_role = str(msg.get("role", "")).strip().lower()
+                if msg_role == "assistant":
+                    content = first_nonempty_string(msg.get("content"), msg.get("text"))
+                    if content:
+                        return content
+
+        result_obj = payload.get("result")
+        if isinstance(result_obj, dict):
+            return extract_assistant_content(result_obj)
+
+        return None
+
+    content = None
+
+    # First try plain JSON output.
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if parsed is not None:
+        content = extract_assistant_content(parsed)
+
+    # Fallback: JSONL event stream. Keep the last assistant message.
+    if not content:
+        last_assistant_content = None
+        for line in raw.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            candidate = extract_assistant_content(event)
+            if candidate:
+                last_assistant_content = candidate
+        content = last_assistant_content
+
+    if not content:
+        print("Error: Copilot JSON output missing assistant content.", file=sys.stderr)
+        raise SystemExit(1)
+
+    output = content
+
+sys.stdout.write(output)
 PY
   ); then
     rm -f "$prompt_file"

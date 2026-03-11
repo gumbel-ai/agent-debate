@@ -91,6 +91,8 @@ These rules override all other behavioral rules. Every proposal and counter-prop
 
 8. **Stay scoped.** Do not expand the topic beyond the stated debate question. If you notice a related issue, add it to PARKING LOT, not the proposal.
 
+9. **You may apply minimal mechanical repairs to keep debate execution unblocked.** If another agent introduces obvious formatting/syntax defects (for example: malformed tags like `[[A2-R2]]`, accidental code fences, broken dispute-log table row formatting), you may fix them in-place and continue. You must not change semantic meaning, stance, or dispute outcomes. Record each repair in the Dispute Log as a formatting-only repair with evidence (`file:line`, actual malformed text, corrected text).
+
 ## Convergence
 
 - After Round 2, if you believe the proposal is ready, write `STATUS: CONVERGED` at the top of the PROPOSAL section.
