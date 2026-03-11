@@ -308,9 +308,30 @@ for token in requested:
             part = part.replace("{EFFORT}", effort_value)
         cmd.append(part)
 
-    # If model override given but no {MODEL} placeholder, append --model <value>
+    # If model override is provided but template has no {MODEL}, inject safely.
+    # Prefer replacing an existing --model value; otherwise insert before prompt
+    # flag for arg-style CLIs so `-p/--prompt` still receives the prompt text.
     if model_override and not has_model_placeholder:
-        cmd.extend(["--model", model_override])
+        replaced_model = False
+        for i, token_part in enumerate(cmd):
+            if token_part == "--model" and i + 1 < len(cmd):
+                cmd[i + 1] = model_override
+                replaced_model = True
+                break
+
+        if not replaced_model:
+            insert_at = None
+            if transport == "arg":
+                for prompt_flag in ("--prompt", "-p"):
+                    if prompt_flag in cmd:
+                        # Insert before the last prompt flag occurrence.
+                        rev_idx = cmd[::-1].index(prompt_flag)
+                        insert_at = len(cmd) - 1 - rev_idx
+                        break
+            if insert_at is None:
+                cmd.extend(["--model", model_override])
+            else:
+                cmd[insert_at:insert_at] = ["--model", model_override]
 
     if not provider and cmd:
         cmd_base = os.path.basename(cmd[0]).lower()

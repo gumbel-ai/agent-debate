@@ -45,6 +45,7 @@ curl -fsSL https://raw.githubusercontent.com/gumbel-ai/agent-debate/main/install
 ```
 
 Works with [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [Gemini CLI](https://github.com/google-gemini/gemini-cli), and [GitHub Copilot CLI](https://github.com/github/copilot-cli). Install for one agent only with `--agent claude`, `--agent codex`, `--agent gemini`, or `--agent copilot`.
+Install Copilot CLI with Homebrew: `brew install copilot-cli`.
 
 ## Usage
 
