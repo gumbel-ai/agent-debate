@@ -4,7 +4,7 @@
       "name": "Opus",
       "command_template": ["claude", "-p", "--model", "opus", "--effort", "{EFFORT}"],
       "reasoning": {
-        "default": "medium",
+        "default": "high",
         "allowed": ["low", "medium", "high"]
       },
       "prompt_transport": "arg"
@@ -13,7 +13,7 @@
       "name": "Sonnet",
       "command_template": ["claude", "-p", "--model", "sonnet", "--effort", "{EFFORT}"],
       "reasoning": {
-        "default": "medium",
+        "default": "high",
         "allowed": ["low", "medium", "high"]
       },
       "prompt_transport": "arg"
@@ -22,7 +22,7 @@
       "name": "Codex",
       "command_template": ["codex", "exec", "--skip-git-repo-check", "-c", "model_reasoning_effort=\"{EFFORT}\""],
       "reasoning": {
-        "default": "medium",
+        "default": "high",
         "allowed": ["low", "medium", "high"]
       },
       "prompt_transport": "arg"

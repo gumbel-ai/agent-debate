@@ -17,12 +17,19 @@ Your goal is NOT to win. It is to arrive at the best possible solution together.
 You are editing a LIVING DOCUMENT, not writing a chat message.
 
 ### If you are Agent 1 (Round 1 — Initial Proposal):
-- Write your proposal directly in the PROPOSAL section
+- Fill the ASSUMPTIONS section first — list every assumption your proposal depends on. Each must be explicit and falsifiable with a stated basis.
+- Fill the SUCCESS CRITERIA section — define how we verify the fix works. Each criterion must be a concrete command, check, or condition with expected output.
+- Then write your proposal in the PROPOSAL section
 - Use clear numbered points or subsections
 - Include concrete code/types where relevant
 - Tag your points: `[A1-R1]` (Agent 1, Round 1)
 
 ### If you are responding to the other agent:
+
+**Before engaging the proposal**, verify the ASSUMPTIONS and SUCCESS CRITERIA sections:
+- Challenge any assumption you can disprove with evidence (strikethrough + counter)
+- Add missing assumptions the proposer overlooked
+- Verify success criteria are actually testable — reject vague criteria like "works correctly"
 
 **To DISAGREE with a specific point:**
 - Strikethrough their text: `~~their claim [A1-R1]~~`
@@ -91,7 +98,11 @@ These rules override all other behavioral rules. Every proposal and counter-prop
 
 8. **Stay scoped.** Do not expand the topic beyond the stated debate question. If you notice a related issue, add it to PARKING LOT, not the proposal.
 
-9. **You may apply minimal mechanical repairs to keep debate execution unblocked.** If another agent introduces obvious formatting/syntax defects (for example: malformed tags like `[[A2-R2]]`, accidental code fences, broken dispute-log table row formatting), you may fix them in-place and continue. You must not change semantic meaning, stance, or dispute outcomes. Record each repair in the Dispute Log as a formatting-only repair with evidence (`file:line`, actual malformed text, corrected text).
+9. **Surgical code changes only.** Proposed code changes must touch only what the fix requires. Do not propose style cleanups, refactors, or improvements to adjacent code. Match existing style. If a simpler change achieves the same outcome, prefer it. "While we're here" changes go in the parking lot.
+
+10. **Stop when confused.** If you cannot verify a claim or don't understand another agent's point, say so explicitly. Write `UNCLEAR: [what you don't understand]` inline and move it to the parking lot. Do not agree with, build on, or silently accept claims you haven't verified. Confusion is not a weakness — unexamined agreement is.
+
+11. **You may apply minimal mechanical repairs to keep debate execution unblocked.** If another agent introduces obvious formatting/syntax defects (for example: malformed tags like `[[A2-R2]]`, accidental code fences, broken dispute-log table row formatting), you may fix them in-place and continue. You must not change semantic meaning, stance, or dispute outcomes. Record each repair in the Dispute Log as a formatting-only repair with evidence (`file:line`, actual malformed text, corrected text).
 
 ## Convergence
 
@@ -116,6 +127,7 @@ After the debate converges, you may be asked to write or review a Plan.
 - Same guardrails apply: strikethrough to disagree, evidence required
 - Check: does this plan actually implement what the debate agreed on?
 - Check: are there missing steps, wrong file references, or ordering issues?
+- Check: does the Verification subsection map back to every Success Criterion? Reject plans with no verification steps.
 - Mark `PLAN_STATUS: CONVERGED` when you agree the plan is ready to execute
 
 **Important:** Use `PLAN_STATUS` (not `STATUS`) for plan convergence. `STATUS: CONVERGED` is for the debate proposal only.

@@ -24,6 +24,25 @@
 
 ---
 
+## Assumptions
+
+{Agent 1 lists assumptions before proposing. Each assumption must be explicit and falsifiable.
+ Responding agents must verify or challenge each assumption before engaging the proposal.
+ Format: `- [A1-R1] Assumption: X. Basis: Y.`
+ To challenge: strikethrough + counter with evidence, same as proposal edits.}
+
+---
+
+## Success Criteria
+
+{Define how we know the fix worked. Required before the proposal can converge.
+ Each criterion must be verifiable — a command to run, output to expect, or condition to check.
+ Format:
+ - [ ] Criterion description — `command or check` → expected result
+ Agents may add/modify criteria using the same edit conventions as the proposal.}
+
+---
+
 ## Proposal
 
 STATUS: OPEN
@@ -55,6 +74,10 @@ PLAN_STATUS: PENDING
 
 ### Order of Operations
 1. {step}
+
+### Verification
+{Final step(s) that confirm the fix works. Must map back to Success Criteria above.
+ Format: `1. Run X → expect Y (validates criterion N)`}
 
 ---
 
