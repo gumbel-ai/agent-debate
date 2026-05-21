@@ -68,6 +68,10 @@ Two modes:
 - **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. By default it then runs a Plan phase; pass `--no-plan` to skip. Use `--skip-provider` if you want to participate as one of the agents yourself
   Plan controls: `--no-plan` (disable) and `--plan-rounds N` (default: 2).
 
+## Watch mode
+
+Watch mode lets one primary agent work normally while a second model reviews progress asynchronously and writes feedback. Start it by saying "start watch mode"; stop it with "stop watch mode". See [Watch Mode](docs/watch-mode.md) for timing, runtime files, and usage details.
+
 ## How it works
 
 All agents follow the same [guardrails](agent-guardrails.md):
