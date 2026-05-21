@@ -1,5 +1,8 @@
 CLAUDE.md
 AGENTS.md
 GEMINI.md
+.DS_Store
 docs/
 debates/
+scripts/
+.agent-debate/
