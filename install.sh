@@ -260,6 +260,19 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
+### Watch Mode
+
+When user says "start watch mode", "watch on", or "begin watch":
+1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
+2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+
+When user says "stop watch mode", "watch off", or "end watch":
+1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+
+While watch mode is active:
+- After each meaningful action, run the same script with `log "<one-line summary>"`.
+- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+
 ### Auto Mode (orchestrator-assisted)
 
 When user says "auto debate" or asks for an automated multi-agent debate:
@@ -272,6 +285,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.gemini/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
+- `~/.agent-debate/watch.sh` — Watch mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 GEMINI_EOF
@@ -319,6 +333,19 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
+### Watch Mode
+
+When user says "start watch mode", "watch on", or "begin watch":
+1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
+2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+
+When user says "stop watch mode", "watch off", or "end watch":
+1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+
+While watch mode is active:
+- After each meaningful action, run the same script with `log "<one-line summary>"`.
+- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+
 ### Auto Mode (orchestrator-assisted)
 
 When user says "auto debate" or asks for an automated multi-agent debate:
@@ -331,6 +358,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.copilot/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.copilot/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
+- `~/.agent-debate/watch.sh` — Watch mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 COPILOT_EOF
