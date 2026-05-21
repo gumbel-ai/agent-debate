@@ -113,6 +113,19 @@ When user says **"implement debate N"**, **"apply plan for debate N"**, or **"im
    - Commands/tests run
    - Any deviations from the plan
 
+### Watch Mode
+
+When user says **"start watch mode"**, **"watch on"**, or **"begin watch"**:
+1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`
+2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+
+When user says **"stop watch mode"**, **"watch off"**, or **"end watch"**:
+1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`
+
+While watch mode is active:
+- After each meaningful action, run the same script with `log "<one-line summary>"`
+- Before claiming a task done or before commits, run `check` and address any feedback before proceeding
+
 ### Auto Mode (orchestrator-assisted)
 
 When user says **"auto debate"** or asks for an automated multi-agent debate:
@@ -126,6 +139,7 @@ When user says **"auto debate"** or asks for an automated multi-agent debate:
 - `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
 - `~/.claude/agent-debate/TEMPLATE.md` — Template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
+- `~/.agent-debate/watch.sh` — Watch mode entrypoint
 - `./debates/` — Project-local debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CLAUDE_EOF
@@ -173,6 +187,19 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
+### Watch Mode
+
+When user says "start watch mode", "watch on", or "begin watch":
+1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
+2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+
+When user says "stop watch mode", "watch off", or "end watch":
+1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+
+While watch mode is active:
+- After each meaningful action, run the same script with `log "<one-line summary>"`.
+- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+
 ### Auto Mode (orchestrator-assisted)
 
 When user says "auto debate" or asks for an automated multi-agent debate:
@@ -185,6 +212,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.codex/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
+- `~/.agent-debate/watch.sh` — Watch mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CODEX_EOF
@@ -398,11 +426,14 @@ install_shared_config() {
   get_file "agent-guardrails.md" "$shared_dir/agent-guardrails.md"
   get_file "TEMPLATE.md" "$shared_dir/TEMPLATE.md"
   get_file "orchestrate.sh" "$shared_dir/orchestrate.sh"
+  get_file "watch.sh" "$shared_dir/watch.sh"
   chmod +x "$shared_dir/orchestrate.sh"
+  chmod +x "$shared_dir/watch.sh"
   echo "  $shared_dir/config.json (default config)"
   echo "  $shared_dir/agent-guardrails.md (auto mode rules)"
   echo "  $shared_dir/TEMPLATE.md (auto mode template)"
   echo "  $shared_dir/orchestrate.sh (auto mode)"
+  echo "  $shared_dir/watch.sh (watch mode)"
 }
 
 uninstall_shared_config() {
