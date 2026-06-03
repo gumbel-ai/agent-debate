@@ -21,7 +21,7 @@ set -euo pipefail
 REPO_RAW="https://raw.githubusercontent.com/gumbel-ai/agent-debate/main"
 SENTINEL_START="<!-- agent-debate:start -->"
 SENTINEL_END="<!-- agent-debate:end -->"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-}" 2>/dev/null)" 2>/dev/null && pwd 2>/dev/null || echo "")"
 
 # --- Arg parsing ---
 
