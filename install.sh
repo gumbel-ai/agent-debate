@@ -123,8 +123,9 @@ When user says **"stop watch mode"**, **"watch off"**, or **"end watch"**:
 1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`
 
 While watch mode is active:
-- After each meaningful action, run the same script with `log "<one-line summary>"`
-- Before claiming a task done or before commits, run `check` and address any feedback before proceeding
+- Claude Code and Codex hooks checkpoint watcher feedback once per turn; Claude also gates `git commit`
+- After meaningful milestones, run the same script with `log "<one-line summary>"` to give the watcher better context
+- Before claiming done, run `check` if hooks are unavailable or feedback was surfaced, and address any feedback before proceeding
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -191,14 +192,16 @@ When user says "continue debate N" or "respond to debate N":
 
 When user says "start watch mode", "watch on", or "begin watch":
 1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
-2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+2. If Codex asks to review/trust the project hook, use `/hooks` to trust the watch-mode Stop hook.
+3. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
 
 When user says "stop watch mode", "watch off", or "end watch":
 1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
 
 While watch mode is active:
-- After each meaningful action, run the same script with `log "<one-line summary>"`.
-- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+- Claude Code and Codex hooks checkpoint watcher feedback once per turn; Claude also gates `git commit`.
+- After meaningful milestones, run the same script with `log "<one-line summary>"` to give the watcher better context.
+- Before claiming done, run `check` if hooks are unavailable or feedback was surfaced, and address any feedback before proceeding.
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -263,15 +266,14 @@ When user says "continue debate N" or "respond to debate N":
 ### Watch Mode
 
 When user says "start watch mode", "watch on", or "begin watch":
-1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
-2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+1. Explain that watch mode is currently supported from Claude Code or Codex hosts only.
+2. Do not run `watch.sh start` from Gemini.
 
 When user says "stop watch mode", "watch off", or "end watch":
 1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
 
 While watch mode is active:
-- After each meaningful action, run the same script with `log "<one-line summary>"`.
-- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+- Watch mode is supported for Claude Code and Codex hosts. Gemini should use debate mode unless watch support is added.
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -336,15 +338,14 @@ When user says "continue debate N" or "respond to debate N":
 ### Watch Mode
 
 When user says "start watch mode", "watch on", or "begin watch":
-1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
-2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+1. Explain that watch mode is currently supported from Claude Code or Codex hosts only.
+2. Do not run `watch.sh start` from Copilot.
 
 When user says "stop watch mode", "watch off", or "end watch":
 1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
 
 While watch mode is active:
-- After each meaningful action, run the same script with `log "<one-line summary>"`.
-- Before claiming a task done or before commits, run `check` and address any feedback before proceeding.
+- Watch mode is supported for Claude Code and Codex hosts. Copilot should use debate mode unless watch support is added.
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -450,18 +451,24 @@ uninstall_agent() {
 install_shared_config() {
   local shared_dir="$HOME/.agent-debate"
   mkdir -p "$shared_dir"
+  mkdir -p "$shared_dir/hooks"
   get_file "debate.config.json" "$shared_dir/config.json"
   get_file "agent-guardrails.md" "$shared_dir/agent-guardrails.md"
   get_file "TEMPLATE.md" "$shared_dir/TEMPLATE.md"
   get_file "orchestrate.sh" "$shared_dir/orchestrate.sh"
   get_file "watch.sh" "$shared_dir/watch.sh"
+  get_file "hooks/watch-stop.sh" "$shared_dir/hooks/watch-stop.sh"
+  get_file "hooks/watch-git-check.sh" "$shared_dir/hooks/watch-git-check.sh"
   chmod +x "$shared_dir/orchestrate.sh"
   chmod +x "$shared_dir/watch.sh"
+  chmod +x "$shared_dir/hooks/watch-stop.sh"
+  chmod +x "$shared_dir/hooks/watch-git-check.sh"
   echo "  $shared_dir/config.json (default config)"
   echo "  $shared_dir/agent-guardrails.md (auto mode rules)"
   echo "  $shared_dir/TEMPLATE.md (auto mode template)"
   echo "  $shared_dir/orchestrate.sh (auto mode)"
   echo "  $shared_dir/watch.sh (watch mode)"
+  echo "  $shared_dir/hooks/ (watch mode hooks)"
 }
 
 uninstall_shared_config() {

@@ -6,7 +6,7 @@
 #   ./watch.sh stop
 #   ./watch.sh status
 #   ./watch.sh log "one-line summary"
-#   ./watch.sh check
+#   ./watch.sh check [--strict]
 
 set -euo pipefail
 
@@ -34,7 +34,8 @@ Commands:
   stop                     Stop watch mode and archive the session files
   status                   Show active state and recent watcher feedback
   log "summary"            Append a primary-agent activity note
-  check                    Print unread watcher feedback and advance cursor
+  check [--strict]         Print unread feedback; strict exits 2 on blockers
+  hook-stop                Internal Stop-hook checkpoint
   loop                     Internal background watcher loop
 EOF
 }
@@ -305,6 +306,276 @@ reset_active_files() {
   : > "$FEEDBACK_FILE"
 }
 
+hook_command_path() {
+  local script_name="$1"
+  local shared_path="$HOME/.agent-debate/hooks/$script_name"
+  local project_path="$PROJECT_DIR/hooks/$script_name"
+
+  if [[ -x "$shared_path" ]]; then
+    printf '%s' "$shared_path"
+  elif [[ -x "$project_path" ]]; then
+    printf '%s' "$project_path"
+  else
+    printf '%s' "$shared_path"
+  fi
+}
+
+project_hook_commands_json() {
+  local script_name="$1"
+  local shared_path="$HOME/.agent-debate/hooks/$script_name"
+  local project_path="$PROJECT_DIR/hooks/$script_name"
+
+  python3 - "$shared_path" "$project_path" <<'PY'
+import json
+import sys
+
+commands = []
+for value in sys.argv[1:]:
+    if value and value not in commands:
+        commands.append(value)
+json.dump(commands, sys.stdout)
+PY
+}
+
+install_claude_project_hooks() {
+  local stop_command="$1"
+  local git_command="$2"
+  local settings_path="$PROJECT_DIR/.claude/settings.local.json"
+
+  mkdir -p "$(dirname "$settings_path")"
+  python3 - "$settings_path" "$stop_command" "$git_command" <<'PY'
+import json
+import os
+import sys
+
+path, stop_command, git_command = sys.argv[1:4]
+
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise SystemExit(f"Error: {path} must contain a JSON object")
+else:
+    data = {}
+
+hooks = data.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    raise SystemExit(f"Error: {path}.hooks must be a JSON object")
+
+def has_command(event: str, command: str) -> bool:
+    groups = hooks.get(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        handlers = group.get("hooks", [])
+        if not isinstance(handlers, list):
+            continue
+        for handler in handlers:
+            if (
+                isinstance(handler, dict)
+                and handler.get("type") == "command"
+                and handler.get("command") == command
+            ):
+                return True
+    return False
+
+def append_group(event: str, group: dict) -> None:
+    groups = hooks.setdefault(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    groups.append(group)
+
+if not has_command("Stop", stop_command):
+    append_group("Stop", {"hooks": [{"type": "command", "command": stop_command}]})
+
+if not has_command("PreToolUse", git_command):
+    append_group(
+        "PreToolUse",
+        {
+            "matcher": "Bash",
+            "hooks": [
+                {
+                    "type": "command",
+                    "if": "Bash(git commit*)",
+                    "command": git_command,
+                }
+            ],
+        },
+    )
+
+tmp_path = f"{path}.tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp_path, path)
+PY
+}
+
+remove_project_hook_commands() {
+  local settings_path="$1"
+  local commands_json="$2"
+
+  [[ -f "$settings_path" ]] || return 0
+
+  python3 - "$settings_path" "$commands_json" <<'PY'
+import json
+import os
+import sys
+
+path = sys.argv[1]
+commands = set(json.loads(sys.argv[2]))
+
+with open(path, "r", encoding="utf-8") as f:
+    data = json.load(f)
+if not isinstance(data, dict):
+    raise SystemExit(f"Error: {path} must contain a JSON object")
+
+hooks = data.get("hooks")
+if not isinstance(hooks, dict):
+    raise SystemExit(0)
+
+for event in list(hooks.keys()):
+    groups = hooks[event]
+    if not isinstance(groups, list):
+        continue
+    kept_groups = []
+    for group in groups:
+        if not isinstance(group, dict):
+            kept_groups.append(group)
+            continue
+        handlers = group.get("hooks")
+        if not isinstance(handlers, list):
+            kept_groups.append(group)
+            continue
+        kept_handlers = []
+        for handler in handlers:
+            if (
+                isinstance(handler, dict)
+                and handler.get("type") == "command"
+                and handler.get("command") in commands
+            ):
+                continue
+            kept_handlers.append(handler)
+        if kept_handlers:
+            group["hooks"] = kept_handlers
+            kept_groups.append(group)
+    if kept_groups:
+        hooks[event] = kept_groups
+    else:
+        hooks.pop(event, None)
+
+if not hooks:
+    data.pop("hooks", None)
+
+tmp_path = f"{path}.tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp_path, path)
+PY
+}
+
+install_codex_project_hooks() {
+  local stop_command="$1"
+  local hooks_path="$PROJECT_DIR/.codex/hooks.json"
+
+  mkdir -p "$(dirname "$hooks_path")"
+  python3 - "$hooks_path" "$stop_command" <<'PY'
+import json
+import os
+import sys
+
+path, stop_command = sys.argv[1:3]
+
+if os.path.exists(path) and os.path.getsize(path) > 0:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise SystemExit(f"Error: {path} must contain a JSON object")
+else:
+    data = {}
+
+hooks = data.setdefault("hooks", {})
+if not isinstance(hooks, dict):
+    raise SystemExit(f"Error: {path}.hooks must be a JSON object")
+
+groups = hooks.setdefault("Stop", [])
+if not isinstance(groups, list):
+    raise SystemExit(f"Error: {path}.hooks.Stop must be an array")
+
+exists = False
+for group in groups:
+    if not isinstance(group, dict):
+        continue
+    handlers = group.get("hooks", [])
+    if not isinstance(handlers, list):
+        continue
+    for handler in handlers:
+        if (
+            isinstance(handler, dict)
+            and handler.get("type") == "command"
+            and handler.get("command") == stop_command
+        ):
+            exists = True
+
+if not exists:
+    groups.append({"hooks": [{"type": "command", "command": stop_command}]})
+
+tmp_path = f"{path}.tmp"
+with open(tmp_path, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+os.replace(tmp_path, path)
+PY
+}
+
+install_project_hooks() {
+  local host_provider="$1"
+  local stop_command git_command
+  stop_command="$(hook_command_path "watch-stop.sh")"
+
+  case "$host_provider" in
+    claude)
+      git_command="$(hook_command_path "watch-git-check.sh")"
+      install_claude_project_hooks "$stop_command" "$git_command"
+      ;;
+    codex)
+      install_codex_project_hooks "$stop_command"
+      ;;
+  esac
+}
+
+remove_project_hooks() {
+  local host_provider="$1"
+  local stop_commands git_commands combined_commands
+
+  case "$host_provider" in
+    claude)
+      stop_commands="$(project_hook_commands_json "watch-stop.sh")"
+      git_commands="$(project_hook_commands_json "watch-git-check.sh")"
+      combined_commands="$(python3 - "$stop_commands" "$git_commands" <<'PY'
+import json
+import sys
+
+combined = []
+for raw in sys.argv[1:]:
+    for value in json.loads(raw):
+        if value not in combined:
+            combined.append(value)
+json.dump(combined, sys.stdout)
+PY
+)"
+      remove_project_hook_commands "$PROJECT_DIR/.claude/settings.local.json" "$combined_commands"
+      ;;
+    codex)
+      stop_commands="$(project_hook_commands_json "watch-stop.sh")"
+      remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$stop_commands"
+      ;;
+  esac
+}
+
 cmd_start() {
   local watcher_alias=""
   while [[ $# -gt 0 ]]; do
@@ -365,6 +636,10 @@ cmd_start() {
   fi
 
   write_initial_state "$host_provider" "$watcher_alias" "$watcher_json" "$interval"
+  if ! install_project_hooks "$host_provider"; then
+    rm -f "$STATE_FILE" "$PID_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE"
+    exit 1
+  fi
   nohup "$WATCH_SCRIPT" loop >/dev/null 2>&1 &
   local pid="$!"
   printf '%s\n' "$pid" > "$PID_FILE"
@@ -383,8 +658,15 @@ cmd_stop() {
 
   local pid=""
   pid="$(state_loop_pid)"
+  local host_provider=""
+  if [[ -f "$STATE_FILE" ]]; then
+    host_provider="$(json_value "host_provider" 2>/dev/null || true)"
+  fi
   if [[ -n "$pid" ]] && live_pid "$pid"; then
     kill "$pid" 2>/dev/null || true
+  fi
+  if [[ -n "$host_provider" ]]; then
+    remove_project_hooks "$host_provider"
   fi
 
   local archive_name
@@ -455,13 +737,33 @@ cmd_log() {
 }
 
 cmd_check() {
+  local strict=false
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --strict)
+        strict=true
+        shift
+        ;;
+      -h|--help)
+        usage
+        return 0
+        ;;
+      *)
+        echo "Unknown option for check: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo "watch mode is not active"
+    if [[ "$strict" == false ]]; then
+      echo "watch mode is not active"
+    fi
     return
   fi
 
   touch "$FEEDBACK_FILE"
-  local cursor size
+  local cursor size blocked=false unread=""
   cursor="$(json_value "feedback_cursor")"
   if ! [[ "$cursor" =~ ^[0-9]+$ ]]; then
     cursor=0
@@ -469,12 +771,44 @@ cmd_check() {
   size="$(wc -c < "$FEEDBACK_FILE" | tr -d '[:space:]')"
 
   if [[ "$size" -gt "$cursor" ]]; then
-    tail -c +"$((cursor + 1))" "$FEEDBACK_FILE"
+    unread="$(tail -c +"$((cursor + 1))" "$FEEDBACK_FILE")"
+    if [[ "$strict" == true ]]; then
+      {
+        echo "Unread watcher feedback requires attention before continuing:"
+        printf '%s\n' "$unread"
+      } >&2
+      blocked=true
+    else
+      printf '%s\n' "$unread"
+    fi
   else
-    echo "No unread watcher feedback."
+    if [[ "$strict" == false ]]; then
+      echo "No unread watcher feedback."
+    fi
   fi
 
   update_state_value "feedback_cursor" "$size"
+
+  if [[ "$strict" == true ]]; then
+    local pid
+    pid="$(state_loop_pid)"
+    if [[ -z "$pid" ]] || ! live_pid "$pid"; then
+      echo "watcher loop is not running; run ./watch.sh status or ./watch.sh stop" >&2
+      blocked=true
+    fi
+    if [[ "$blocked" == true ]]; then
+      exit 2
+    fi
+  fi
+}
+
+cmd_hook_stop() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    return 0
+  fi
+
+  cmd_log "Stop hook: turn completed"
+  cmd_check --strict
 }
 
 invoke_watcher() {
@@ -613,6 +947,7 @@ case "$command" in
   status) cmd_status "$@" ;;
   log) cmd_log "$@" ;;
   check) cmd_check "$@" ;;
+  hook-stop) cmd_hook_stop "$@" ;;
   loop) cmd_loop "$@" ;;
   -h|--help) usage ;;
   *)
