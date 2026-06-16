@@ -980,7 +980,7 @@ cmd_gate() {
   touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
 
   local analysis
-  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" <<'PY'
+  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" 2>/dev/null <<'PY'
 import json
 import os
 import sys

@@ -170,6 +170,7 @@ class WatchLedgerContractTest(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0)
             self.assertIn("allowing completion", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
 
     def test_watcher_loop_sees_untracked_files_and_trailing_no_feedback_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmpdir:
