@@ -34,8 +34,8 @@ The watcher reads recent `journal.md` entries plus `git diff --stat`. If it sees
 
 When started from Claude Code or Codex, watch mode also installs project-local hook entries for the active session:
 
-- Claude Code: `.claude/settings.local.json` gets a `Stop` hook that logs/checks once per turn, plus a `PreToolUse` hook that gates `git commit`.
-- Codex CLI: `.codex/hooks.json` gets a `Stop` hook that logs/checks once per turn. Codex may require reviewing and trusting the project hook with `/hooks` before it runs.
+- Claude Code: `.claude/settings.local.json` gets a `Stop` hook that logs/checks once per turn, a `PreToolUse` hook that gates `TaskUpdate` completion, and a `PreToolUse` hook that gates `git commit`.
+- Codex CLI: `.codex/hooks.json` gets a `Stop` hook that logs/checks once per turn and a `PreToolUse` hook that gates `update_plan` when a new task is marked completed. Codex may require reviewing and trusting the project hooks with `/hooks` before they run.
 
 `watch.sh stop` removes only the hook commands that watch mode installed and preserves unrelated settings.
 
@@ -48,6 +48,6 @@ When started from Claude Code or Codex, watch mode also installs project-local h
   WATCH_INTERVAL=30 ./watch.sh start
   ```
 
-- **Primary checks feedback:** hook-backed checkpoints. Hooks call `watch.sh check --strict`, which exits `2` on unread watcher feedback or a stale watcher loop and exits `0` silently when clean. Non-strict `watch.sh check` remains available for manual feedback checks.
+- **Primary checks feedback:** hook-backed checkpoints. Hooks call `watch.sh check --strict`, which exits `2` on unread watcher feedback or a stale watcher loop and exits `0` silently when clean. The task/todo hook runs before Claude marks a task completed and before Codex applies an `update_plan` containing a newly completed task. If Codex does not provide a readable transcript path, any completed task in the submitted plan triggers the check. Non-strict `watch.sh check` remains available for manual feedback checks.
 
-Hook enforcement is intentionally coarse. It checks once per turn and before Claude-run `git commit`, avoiding per-tool logging noise. Gemini and Copilot are outside watch-mode hook support for v1.
+Hook enforcement is intentionally coarse. It checks once per turn, before todo/task completion, and before Claude-run `git commit`, avoiding per-tool logging noise. Gemini and Copilot are outside watch-mode hook support for v1.

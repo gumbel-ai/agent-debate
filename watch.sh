@@ -340,15 +340,16 @@ PY
 install_claude_project_hooks() {
   local stop_command="$1"
   local git_command="$2"
+  local task_command="$3"
   local settings_path="$PROJECT_DIR/.claude/settings.local.json"
 
   mkdir -p "$(dirname "$settings_path")"
-  python3 - "$settings_path" "$stop_command" "$git_command" <<'PY'
+  python3 - "$settings_path" "$stop_command" "$git_command" "$task_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command, git_command = sys.argv[1:4]
+path, stop_command, git_command, task_command = sys.argv[1:5]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -402,6 +403,15 @@ if not has_command("PreToolUse", git_command):
                     "command": git_command,
                 }
             ],
+        },
+    )
+
+if not has_command("PreToolUse", task_command):
+    append_group(
+        "PreToolUse",
+        {
+            "matcher": "TaskUpdate",
+            "hooks": [{"type": "command", "command": task_command}],
         },
     )
 
@@ -479,15 +489,16 @@ PY
 
 install_codex_project_hooks() {
   local stop_command="$1"
+  local task_command="$2"
   local hooks_path="$PROJECT_DIR/.codex/hooks.json"
 
   mkdir -p "$(dirname "$hooks_path")"
-  python3 - "$hooks_path" "$stop_command" <<'PY'
+  python3 - "$hooks_path" "$stop_command" "$task_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command = sys.argv[1:3]
+path, stop_command, task_command = sys.argv[1:4]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -501,27 +512,42 @@ hooks = data.setdefault("hooks", {})
 if not isinstance(hooks, dict):
     raise SystemExit(f"Error: {path}.hooks must be a JSON object")
 
-groups = hooks.setdefault("Stop", [])
-if not isinstance(groups, list):
-    raise SystemExit(f"Error: {path}.hooks.Stop must be an array")
+def has_command(event: str, command: str) -> bool:
+    groups = hooks.get(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        handlers = group.get("hooks", [])
+        if not isinstance(handlers, list):
+            continue
+        for handler in handlers:
+            if (
+                isinstance(handler, dict)
+                and handler.get("type") == "command"
+                and handler.get("command") == command
+            ):
+                return True
+    return False
 
-exists = False
-for group in groups:
-    if not isinstance(group, dict):
-        continue
-    handlers = group.get("hooks", [])
-    if not isinstance(handlers, list):
-        continue
-    for handler in handlers:
-        if (
-            isinstance(handler, dict)
-            and handler.get("type") == "command"
-            and handler.get("command") == stop_command
-        ):
-            exists = True
+def append_group(event: str, group: dict) -> None:
+    groups = hooks.setdefault(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    groups.append(group)
 
-if not exists:
-    groups.append({"hooks": [{"type": "command", "command": stop_command}]})
+if not has_command("Stop", stop_command):
+    append_group("Stop", {"hooks": [{"type": "command", "command": stop_command}]})
+
+if not has_command("PreToolUse", task_command):
+    append_group(
+        "PreToolUse",
+        {
+            "matcher": "^update_plan$",
+            "hooks": [{"type": "command", "command": task_command}],
+        },
+    )
 
 tmp_path = f"{path}.tmp"
 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -533,29 +559,31 @@ PY
 
 install_project_hooks() {
   local host_provider="$1"
-  local stop_command git_command
+  local stop_command git_command task_command
   stop_command="$(hook_command_path "watch-stop.sh")"
+  task_command="$(hook_command_path "watch-task-check.sh")"
 
   case "$host_provider" in
     claude)
       git_command="$(hook_command_path "watch-git-check.sh")"
-      install_claude_project_hooks "$stop_command" "$git_command"
+      install_claude_project_hooks "$stop_command" "$git_command" "$task_command"
       ;;
     codex)
-      install_codex_project_hooks "$stop_command"
+      install_codex_project_hooks "$stop_command" "$task_command"
       ;;
   esac
 }
 
 remove_project_hooks() {
   local host_provider="$1"
-  local stop_commands git_commands combined_commands
+  local stop_commands git_commands task_commands combined_commands
 
   case "$host_provider" in
     claude)
       stop_commands="$(project_hook_commands_json "watch-stop.sh")"
       git_commands="$(project_hook_commands_json "watch-git-check.sh")"
-      combined_commands="$(python3 - "$stop_commands" "$git_commands" <<'PY'
+      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
+      combined_commands="$(python3 - "$stop_commands" "$git_commands" "$task_commands" <<'PY'
 import json
 import sys
 
@@ -571,7 +599,20 @@ PY
       ;;
     codex)
       stop_commands="$(project_hook_commands_json "watch-stop.sh")"
-      remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$stop_commands"
+      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
+      combined_commands="$(python3 - "$stop_commands" "$task_commands" <<'PY'
+import json
+import sys
+
+combined = []
+for raw in sys.argv[1:]:
+    for value in json.loads(raw):
+        if value not in combined:
+            combined.append(value)
+json.dump(combined, sys.stdout)
+PY
+)"
+      remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$combined_commands"
       ;;
   esac
 }
