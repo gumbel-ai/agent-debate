@@ -933,6 +933,9 @@ cmd_check() {
     cursor=0
   fi
   size="$(file_size "$FEEDBACK_FILE")"
+  if [[ "$cursor" -gt "$size" ]]; then
+    cursor=0
+  fi
 
   if [[ "$size" -gt "$cursor" ]]; then
     unread="$(tail -c +"$((cursor + 1))" "$FEEDBACK_FILE")"
@@ -1055,6 +1058,9 @@ cmd_hook_stop() {
   local cursor size
   cursor="$(state_int_value "feedback_cursor" 0)"
   size="$(file_size "$FEEDBACK_FILE")"
+  if [[ "$cursor" -gt "$size" ]]; then
+    cursor=0
+  fi
   if [[ "$size" -gt "$cursor" ]]; then
     echo "Unread watcher feedback is available; run ./watch.sh check" >&2
   fi
@@ -1136,7 +1142,7 @@ cmd_loop() {
     [[ -f "$PID_FILE" && -f "$STATE_FILE" ]] || break
 
     local watcher_alias host_provider watcher_provider watcher_json journal_tail journal_slice_file journal_new_offset
-    local diff_stat git_status feedback_status prompt_file output output_last_line
+    local diff_stat git_status feedback_status feedback_cursor feedback_size prompt_file output output_last_line
     watcher_alias="$(json_value "watcher_alias")"
     host_provider="$(json_value "host_provider")"
 
@@ -1190,7 +1196,12 @@ PY
 
     diff_stat="$(git diff --stat 2>/dev/null || true)"
     git_status="$(git status --short 2>/dev/null || true)"
-    if [[ "$(file_size "$FEEDBACK_FILE")" -gt "$(state_int_value "feedback_cursor" 0)" ]]; then
+    feedback_size="$(file_size "$FEEDBACK_FILE")"
+    feedback_cursor="$(state_int_value "feedback_cursor" 0)"
+    if [[ "$feedback_cursor" -gt "$feedback_size" ]]; then
+      feedback_cursor=0
+    fi
+    if [[ "$feedback_size" -gt "$feedback_cursor" ]]; then
       feedback_status="unread feedback pending; primary must run ./watch.sh feedback accept|deny|park"
     else
       feedback_status="clear"

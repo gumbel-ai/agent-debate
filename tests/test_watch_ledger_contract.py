@@ -115,6 +115,18 @@ class WatchLedgerContractTest(unittest.TestCase):
             self.assertEqual(passed.returncode, 0)
             self.assertIn("feedback-action: accept added validation", self.journal(project))
 
+    def test_check_clamps_cursor_after_feedback_file_truncation(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self.make_project(tmpdir)
+            self.write_state(project, feedback_cursor=999)
+            feedback_file = project / ".agent-debate" / "watch" / "feedback.md"
+            feedback_file.write_text("new feedback\n")
+
+            result = self.run_watch(project, "check")
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("new feedback", result.stdout)
+
     def test_escape_hatch_logs_bypass(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self.make_project(tmpdir)
