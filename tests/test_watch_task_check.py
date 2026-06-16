@@ -40,7 +40,7 @@ class WatchTaskCheckTest(unittest.TestCase):
         )
 
     def assert_checked(self, log):
-        self.assertEqual(log.read_text(), "check --strict\n")
+        self.assertEqual(log.read_text(), "gate\n")
 
     def test_claude_completed_task_runs_check(self):
         with tempfile.TemporaryDirectory() as tmpdir:

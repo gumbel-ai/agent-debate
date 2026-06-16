@@ -6,6 +6,10 @@
 #   ./watch.sh stop
 #   ./watch.sh status
 #   ./watch.sh log "one-line summary"
+#   ./watch.sh intent "what + why + expected validation"
+#   ./watch.sh progress "what changed + current risk"
+#   ./watch.sh outcome "files changed + checks run + remaining risk"
+#   ./watch.sh feedback accept|deny|park "summary/reason"
 #   ./watch.sh check [--strict]
 
 set -euo pipefail
@@ -34,7 +38,12 @@ Commands:
   stop                     Stop watch mode and archive the session files
   status                   Show active state and recent watcher feedback
   log "summary"            Append a primary-agent activity note
+  intent "summary"         Append a structured intent ledger entry
+  progress "summary"       Append a structured progress ledger entry
+  outcome "summary"        Append a structured outcome ledger entry
+  feedback ACTION "reason" Record feedback disposition; ACTION is accept, deny, or park
   check [--strict]         Print unread feedback; strict exits 2 on blockers
+  gate                     Internal task-completion ledger gate
   hook-stop                Internal Stop-hook checkpoint
   loop                     Internal background watcher loop
 EOF
@@ -219,6 +228,34 @@ print(value)
 PY
 }
 
+state_int_value() {
+  local key="$1"
+  local default_value="${2:-0}"
+
+  python3 - "$STATE_FILE" "$key" "$default_value" <<'PY'
+import json
+import sys
+
+path, key, default = sys.argv[1:4]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+    value = state.get(key, default)
+    print(int(value))
+except Exception:
+    print(default)
+PY
+}
+
+file_size() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    wc -c < "$path" | tr -d '[:space:]'
+  else
+    printf '0'
+  fi
+}
+
 write_initial_state() {
   local host_provider="$1"
   local watcher_alias="$2"
@@ -240,6 +277,8 @@ state = {
     "journal_path": journal_path,
     "feedback_path": feedback_path,
     "feedback_cursor": 0,
+    "ledger_completion_cursor": 0,
+    "journal_review_offset": 0,
     "loop_pid": "",
     "started_at": datetime.now(timezone.utc).isoformat(),
     "watch_interval": int(interval),
@@ -259,24 +298,44 @@ update_state_value() {
 import json
 import os
 import sys
+import time
 
 path, key, value = sys.argv[1:4]
-with open(path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-
-if key in {"feedback_cursor", "loop_pid", "watch_interval"}:
+lock_path = f"{path}.lock"
+locked = False
+for _ in range(100):
     try:
-        state[key] = int(value)
-    except ValueError:
-        state[key] = value
-else:
-    state[key] = value
+        os.mkdir(lock_path)
+        locked = True
+        break
+    except FileExistsError:
+        time.sleep(0.05)
 
-tmp_path = f"{path}.tmp"
-with open(tmp_path, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2)
-    f.write("\n")
-os.replace(tmp_path, path)
+if not locked:
+    raise SystemExit(f"Error: timed out waiting for state lock {lock_path}")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+
+    if key in {"feedback_cursor", "journal_review_offset", "ledger_completion_cursor", "loop_pid", "watch_interval"}:
+        try:
+            state[key] = int(value)
+        except ValueError:
+            state[key] = value
+    else:
+        state[key] = value
+
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, path)
+finally:
+    try:
+        os.rmdir(lock_path)
+    except FileNotFoundError:
+        pass
 PY
 }
 
@@ -689,6 +748,14 @@ cmd_start() {
   local watcher_provider
   watcher_provider="$(json_value "watcher_provider")"
   echo "Watch mode on. ${watcher_alias} (${watcher_provider:-unknown}) will review asynchronously every ${interval}s."
+  cat <<'EOF'
+Watch ledger contract:
+- Before marking a todo/task complete, run: ./watch.sh intent "what + why + expected validation"
+- Check feedback with: ./watch.sh check
+- If feedback exists, record a disposition before completing: ./watch.sh feedback accept|deny|park "reason"
+- Optional context: ./watch.sh progress "..." and ./watch.sh outcome "..."
+- Emergency bypass for one gate: WATCH_LEDGER_OFF=1
+EOF
 }
 
 cmd_stop() {
@@ -777,6 +844,49 @@ cmd_log() {
   printf '[%s] %s\n' "$(date -Iseconds)" "$*" >> "$JOURNAL_FILE"
 }
 
+cmd_tagged_log() {
+  local tag="$1"
+  shift
+  if [[ $# -eq 0 ]]; then
+    echo "Error: $tag requires a one-line summary" >&2
+    exit 1
+  fi
+  cmd_log "$tag: $*"
+}
+
+cmd_intent() {
+  cmd_tagged_log "intent" "$@"
+}
+
+cmd_progress() {
+  cmd_tagged_log "progress" "$@"
+}
+
+cmd_outcome() {
+  cmd_tagged_log "outcome" "$@"
+}
+
+cmd_feedback() {
+  if [[ $# -lt 2 ]]; then
+    echo "Error: feedback requires accept|deny|park and a reason" >&2
+    exit 1
+  fi
+
+  local action="$1"
+  shift
+  case "$action" in
+    accept|deny|park) ;;
+    *)
+      echo "Error: feedback action must be accept, deny, or park" >&2
+      exit 1
+      ;;
+  esac
+
+  cmd_log "feedback-action: $action $*"
+  touch "$FEEDBACK_FILE"
+  update_state_value "feedback_cursor" "$(file_size "$FEEDBACK_FILE")"
+}
+
 cmd_check() {
   local strict=false
   while [[ $# -gt 0 ]]; do
@@ -805,11 +915,11 @@ cmd_check() {
 
   touch "$FEEDBACK_FILE"
   local cursor size blocked=false unread=""
-  cursor="$(json_value "feedback_cursor")"
+  cursor="$(state_int_value "feedback_cursor" 0)"
   if ! [[ "$cursor" =~ ^[0-9]+$ ]]; then
     cursor=0
   fi
-  size="$(wc -c < "$FEEDBACK_FILE" | tr -d '[:space:]')"
+  size="$(file_size "$FEEDBACK_FILE")"
 
   if [[ "$size" -gt "$cursor" ]]; then
     unread="$(tail -c +"$((cursor + 1))" "$FEEDBACK_FILE")"
@@ -817,18 +927,18 @@ cmd_check() {
       {
         echo "Unread watcher feedback requires attention before continuing:"
         printf '%s\n' "$unread"
+        echo "Record a disposition with: ./watch.sh feedback accept|deny|park \"reason\""
       } >&2
       blocked=true
     else
       printf '%s\n' "$unread"
+      echo "Feedback remains unread until you run: ./watch.sh feedback accept|deny|park \"reason\""
     fi
   else
     if [[ "$strict" == false ]]; then
       echo "No unread watcher feedback."
     fi
   fi
-
-  update_state_value "feedback_cursor" "$size"
 
   if [[ "$strict" == true ]]; then
     local pid
@@ -843,13 +953,99 @@ cmd_check() {
   fi
 }
 
+cmd_gate() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    return 0
+  fi
+
+  if [[ "${WATCH_LEDGER_OFF:-}" == "1" ]]; then
+    cmd_log "outcome: ledger-gate bypassed (WATCH_LEDGER_OFF)"
+    echo "watch ledger gate bypassed by WATCH_LEDGER_OFF=1" >&2
+    return 0
+  fi
+
+  touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
+
+  local analysis
+  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" <<'PY'
+import json
+import os
+import sys
+
+state_path, journal_path, feedback_path = sys.argv[1:4]
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+def int_value(key):
+    try:
+        return int(state.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
+
+ledger_cursor = max(0, int_value("ledger_completion_cursor"))
+feedback_cursor = max(0, int_value("feedback_cursor"))
+
+journal_size = os.path.getsize(journal_path) if os.path.exists(journal_path) else 0
+feedback_size = os.path.getsize(feedback_path) if os.path.exists(feedback_path) else 0
+
+if ledger_cursor > journal_size:
+    ledger_cursor = 0
+if feedback_cursor > feedback_size:
+    feedback_cursor = 0
+
+with open(journal_path, "rb") as f:
+    f.seek(ledger_cursor)
+    journal_delta = f.read().decode("utf-8", errors="replace")
+
+has_intent = any("] intent: " in line for line in journal_delta.splitlines())
+has_unread_feedback = feedback_size > feedback_cursor
+
+print("1" if has_intent else "0")
+print("1" if has_unread_feedback else "0")
+print(journal_size)
+PY
+  )"; then
+    echo "watch ledger gate could not read state; allowing completion" >&2
+    return 0
+  fi
+
+  local has_intent has_unread_feedback journal_size blocked=false
+  has_intent="$(printf '%s\n' "$analysis" | sed -n '1p')"
+  has_unread_feedback="$(printf '%s\n' "$analysis" | sed -n '2p')"
+  journal_size="$(printf '%s\n' "$analysis" | sed -n '3p')"
+
+  if [[ "$has_intent" != "1" ]]; then
+    echo "Watch ledger requires intent before task completion." >&2
+    echo "Run: ./watch.sh intent \"what + why + expected validation\"" >&2
+    blocked=true
+  fi
+
+  if [[ "$has_unread_feedback" == "1" ]]; then
+    echo "Unread watcher feedback requires disposition before task completion." >&2
+    echo "Run: ./watch.sh feedback accept|deny|park \"reason\"" >&2
+    blocked=true
+  fi
+
+  if [[ "$blocked" == true ]]; then
+    exit 2
+  fi
+
+  update_state_value "ledger_completion_cursor" "$journal_size"
+}
+
 cmd_hook_stop() {
   if [[ ! -f "$STATE_FILE" ]]; then
     return 0
   fi
 
-  cmd_log "Stop hook: turn completed"
-  cmd_check --strict
+  touch "$FEEDBACK_FILE"
+  local cursor size
+  cursor="$(state_int_value "feedback_cursor" 0)"
+  size="$(file_size "$FEEDBACK_FILE")"
+  if [[ "$size" -gt "$cursor" ]]; then
+    echo "Unread watcher feedback is available; run ./watch.sh check" >&2
+  fi
+  return 0
 }
 
 invoke_watcher() {
@@ -926,7 +1122,8 @@ cmd_loop() {
     sleep "$interval"
     [[ -f "$PID_FILE" && -f "$STATE_FILE" ]] || break
 
-    local watcher_alias host_provider watcher_provider watcher_json journal_tail diff_stat prompt_file output
+    local watcher_alias host_provider watcher_provider watcher_json journal_tail journal_slice_file journal_new_offset
+    local diff_stat git_status feedback_status prompt_file output output_last_line
     watcher_alias="$(json_value "watcher_alias")"
     host_provider="$(json_value "host_provider")"
 
@@ -943,22 +1140,68 @@ print(watcher.get("provider", ""))
 PY
 )"
 
-    journal_tail="$(tail -n 80 "$JOURNAL_FILE" 2>/dev/null || true)"
+    journal_slice_file="$(mktemp)"
+    if ! journal_new_offset="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$journal_slice_file" 2>/dev/null <<'PY'
+import json
+import os
+import sys
+
+state_path, journal_path, output_path = sys.argv[1:4]
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+try:
+    offset = int(state.get("journal_review_offset", 0))
+except (TypeError, ValueError):
+    offset = 0
+
+size = os.path.getsize(journal_path) if os.path.exists(journal_path) else 0
+offset = max(0, min(offset, size))
+
+with open(output_path, "w", encoding="utf-8") as out:
+    if offset < size:
+        with open(journal_path, "rb") as journal:
+            journal.seek(offset)
+            out.write(journal.read().decode("utf-8", errors="replace"))
+    else:
+        out.write("(no new journal entries since last review)\n")
+
+print(size)
+PY
+    )"; then
+      tail -n 80 "$JOURNAL_FILE" > "$journal_slice_file" 2>/dev/null || true
+      journal_new_offset="$(file_size "$JOURNAL_FILE")"
+    fi
+    journal_tail="$(cat "$journal_slice_file")"
+    rm -f "$journal_slice_file"
+
     diff_stat="$(git diff --stat 2>/dev/null || true)"
+    git_status="$(git status --short 2>/dev/null || true)"
+    if [[ "$(file_size "$FEEDBACK_FILE")" -gt "$(state_int_value "feedback_cursor" 0)" ]]; then
+      feedback_status="unread feedback pending; primary must run ./watch.sh feedback accept|deny|park"
+    else
+      feedback_status="clear"
+    fi
     prompt_file="$(mktemp)"
     cat > "$prompt_file" <<EOF
 You are watching a coding session asynchronously.
 Primary provider: $host_provider
 Watcher provider: $watcher_provider
 
-Recent primary journal:
+New primary journal since last watcher pass:
 $journal_tail
+
+Current git status --short:
+$git_status
 
 Current git diff stat:
 $diff_stat
 
+Unread feedback disposition status:
+$feedback_status
+
 Write at most one concise note if there is a concrete risk, missed requirement, or likely bug.
-If there is no actionable feedback, output exactly NO_FEEDBACK.
+If there is no actionable feedback, output a single line: NO_FEEDBACK.
 EOF
 
     if ! output="$(invoke_watcher "$watcher_json" "$prompt_file" 2>&1)"; then
@@ -968,8 +1211,11 @@ EOF
     fi
     rm -f "$prompt_file"
 
+    update_state_value "journal_review_offset" "$journal_new_offset"
+
     output="$(printf '%s' "$output" | sed '/^[[:space:]]*$/d')"
-    if [[ -n "$output" && "$output" != "NO_FEEDBACK" ]]; then
+    output_last_line="$(printf '%s\n' "$output" | tail -n 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [[ -n "$output" && "$output_last_line" != "NO_FEEDBACK" ]]; then
       printf '\n[%s] [%s] %s\n' "$(date -Iseconds)" "${watcher_provider:-watcher}" "$output" >> "$FEEDBACK_FILE"
     fi
   done
@@ -987,7 +1233,12 @@ case "$command" in
   stop) cmd_stop "$@" ;;
   status) cmd_status "$@" ;;
   log) cmd_log "$@" ;;
+  intent) cmd_intent "$@" ;;
+  progress) cmd_progress "$@" ;;
+  outcome) cmd_outcome "$@" ;;
+  feedback) cmd_feedback "$@" ;;
   check) cmd_check "$@" ;;
+  gate) cmd_gate "$@" ;;
   hook-stop) cmd_hook_stop "$@" ;;
   loop) cmd_loop "$@" ;;
   -h|--help) usage ;;

@@ -70,7 +70,7 @@ Two modes:
 
 ## Watch mode
 
-Watch mode lets one primary agent work normally while a second model reviews progress asynchronously and writes feedback. In Claude Code and Codex, project-local hooks checkpoint that feedback once per turn and before todo/task completion; Claude also gates `git commit`. Start it by saying "start watch mode"; stop it with "stop watch mode". See [Watch Mode](docs/watch-mode.md) for timing, runtime files, and usage details.
+Watch mode lets one primary agent work normally while a second model reviews progress asynchronously and writes feedback. In Claude Code and Codex, project-local hooks require a ledger `intent` before todo/task completion and require watcher feedback to be accepted, denied, or parked before completion; Claude also gates `git commit`. Start it by saying "start watch mode"; stop it with "stop watch mode". See [Watch Mode](docs/watch-mode.md) for timing, runtime files, and usage details.
 
 ## How it works
 

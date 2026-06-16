@@ -136,4 +136,4 @@ if [[ ! -x "$watch_script" ]]; then
 fi
 
 cd "$project_dir"
-exec "$watch_script" check --strict
+exec "$watch_script" gate
