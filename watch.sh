@@ -923,7 +923,7 @@ cmd_check() {
     if [[ "$strict" == false ]]; then
       echo "watch mode is not active"
     fi
-    return
+    return 0
   fi
 
   touch "$FEEDBACK_FILE"

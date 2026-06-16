@@ -68,6 +68,14 @@ class WatchLedgerContractTest(unittest.TestCase):
         archives = sorted((project / ".agent-debate" / "watch" / "archive").iterdir())
         return archives[-1]
 
+    def wait_until(self, predicate, timeout=8):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
+                return
+            time.sleep(0.1)
+        self.fail("timed out waiting for condition")
+
     def test_gate_requires_new_intent_per_completion(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self.make_project(tmpdir)
@@ -221,7 +229,9 @@ class WatchLedgerContractTest(unittest.TestCase):
             start = self.run_watch(project, "start", "--watcher", "dummy", env=env)
             self.assertEqual(start.returncode, 0, start.stderr)
             self.run_watch(project, "intent", "exercise watcher prompt", env=env)
-            time.sleep(2.3)
+            self.wait_until(
+                lambda: prompt_path.exists() and "?? new_file.txt" in prompt_path.read_text()
+            )
             stop = self.run_watch(project, "stop", env=env)
             self.assertEqual(stop.returncode, 0, stop.stderr)
 
@@ -236,8 +246,13 @@ class WatchLedgerContractTest(unittest.TestCase):
             project = self.make_project(tmpdir)
             subprocess.run(["git", "init", "-q"], cwd=project, check=True)
             watcher = project / "watcher.sh"
+            count_file = project / "watcher-count.txt"
             watcher.write_text(
                 "#!/usr/bin/env bash\n"
+                "count=0\n"
+                "if [[ -f \"$WATCH_TEST_COUNT\" ]]; then count=$(cat \"$WATCH_TEST_COUNT\"); fi\n"
+                "count=$((count + 1))\n"
+                "printf '%s\\n' \"$count\" > \"$WATCH_TEST_COUNT\"\n"
                 "prompt=$(cat)\n"
                 "if printf '%s' \"$prompt\" | grep -q 'intent:'; then\n"
                 "  printf 'review this once\\n'\n"
@@ -262,11 +277,17 @@ class WatchLedgerContractTest(unittest.TestCase):
                 + "\n"
             )
 
-            env = {"AGENT_DEBATE_HOST_PROVIDER": "codex", "WATCH_INTERVAL": "1"}
+            env = {
+                "AGENT_DEBATE_HOST_PROVIDER": "codex",
+                "WATCH_INTERVAL": "1",
+                "WATCH_TEST_COUNT": str(count_file),
+            }
             start = self.run_watch(project, "start", "--watcher", "dummy", env=env)
             self.assertEqual(start.returncode, 0, start.stderr)
             self.run_watch(project, "intent", "one thing", env=env)
-            time.sleep(2.8)
+            self.wait_until(
+                lambda: count_file.exists() and int(count_file.read_text().strip()) >= 2
+            )
             stop = self.run_watch(project, "stop", env=env)
             self.assertEqual(stop.returncode, 0, stop.stderr)
 
