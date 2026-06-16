@@ -302,6 +302,7 @@ import time
 
 path, key, value = sys.argv[1:4]
 lock_path = f"{path}.lock"
+stale_after_seconds = 300
 locked = False
 for _ in range(100):
     try:
@@ -309,6 +310,13 @@ for _ in range(100):
         locked = True
         break
     except FileExistsError:
+        try:
+            age = time.time() - os.stat(lock_path).st_mtime
+            if age > stale_after_seconds:
+                os.rmdir(lock_path)
+                continue
+        except OSError:
+            pass
         time.sleep(0.05)
 
 if not locked:
@@ -334,8 +342,8 @@ try:
 finally:
     try:
         os.rmdir(lock_path)
-    except FileNotFoundError:
-        pass
+    except OSError as exc:
+        print(f"Warning: could not remove state lock {lock_path}: {exc}", file=sys.stderr)
 PY
 }
 
@@ -867,6 +875,11 @@ cmd_outcome() {
 }
 
 cmd_feedback() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "watch mode is not active"
+    return
+  fi
+
   if [[ $# -lt 2 ]]; then
     echo "Error: feedback requires accept|deny|park and a reason" >&2
     exit 1

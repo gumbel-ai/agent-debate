@@ -124,6 +124,32 @@ class WatchLedgerContractTest(unittest.TestCase):
             self.assertEqual(result.returncode, 0)
             self.assertIn("ledger-gate bypassed", self.journal(project))
 
+    def test_feedback_inactive_does_not_create_runtime_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = Path(tmpdir) / "project"
+            project.mkdir()
+
+            result = self.run_watch(project, "feedback", "accept", "not active")
+
+            self.assertEqual(result.returncode, 0)
+            self.assertIn("watch mode is not active", result.stdout)
+            self.assertFalse((project / ".agent-debate").exists())
+
+    def test_stale_state_lock_is_recovered(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self.make_project(tmpdir)
+            self.run_watch(project, "intent", "implement storage")
+            lock_path = project / ".agent-debate" / "watch" / "state.json.lock"
+            lock_path.mkdir()
+            stale_time = time.time() - 400
+            os.utime(lock_path, (stale_time, stale_time))
+
+            result = self.run_watch(project, "gate")
+
+            self.assertEqual(result.returncode, 0)
+            self.assertFalse(lock_path.exists())
+            self.assertGreater(self.state(project)["ledger_completion_cursor"], 0)
+
     def test_stop_hook_warns_without_blocking_or_logging(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self.make_project(tmpdir)
