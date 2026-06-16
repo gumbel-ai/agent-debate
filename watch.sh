@@ -6,6 +6,10 @@
 #   ./watch.sh stop
 #   ./watch.sh status
 #   ./watch.sh log "one-line summary"
+#   ./watch.sh intent "what + why + expected validation"
+#   ./watch.sh progress "what changed + current risk"
+#   ./watch.sh outcome "files changed + checks run + remaining risk"
+#   ./watch.sh feedback accept|deny|park "summary/reason"
 #   ./watch.sh check [--strict]
 
 set -euo pipefail
@@ -25,6 +29,10 @@ else
   WATCH_SCRIPT="$PROJECT_DIR/$SCRIPT_SOURCE"
 fi
 
+watch_command_display() {
+  printf '%q' "$WATCH_SCRIPT"
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") COMMAND
@@ -34,7 +42,12 @@ Commands:
   stop                     Stop watch mode and archive the session files
   status                   Show active state and recent watcher feedback
   log "summary"            Append a primary-agent activity note
+  intent "summary"         Append a structured intent ledger entry
+  progress "summary"       Append a structured progress ledger entry
+  outcome "summary"        Append a structured outcome ledger entry
+  feedback ACTION "reason" Record feedback disposition; ACTION is accept, deny, or park
   check [--strict]         Print unread feedback; strict exits 2 on blockers
+  gate                     Internal task-completion ledger gate
   hook-stop                Internal Stop-hook checkpoint
   loop                     Internal background watcher loop
 EOF
@@ -219,6 +232,34 @@ print(value)
 PY
 }
 
+state_int_value() {
+  local key="$1"
+  local default_value="${2:-0}"
+
+  python3 - "$STATE_FILE" "$key" "$default_value" <<'PY'
+import json
+import sys
+
+path, key, default = sys.argv[1:4]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+    value = state.get(key, default)
+    print(int(value))
+except Exception:
+    print(default)
+PY
+}
+
+file_size() {
+  local path="$1"
+  if [[ -f "$path" ]]; then
+    wc -c < "$path" | tr -d '[:space:]'
+  else
+    printf '0'
+  fi
+}
+
 write_initial_state() {
   local host_provider="$1"
   local watcher_alias="$2"
@@ -240,6 +281,8 @@ state = {
     "journal_path": journal_path,
     "feedback_path": feedback_path,
     "feedback_cursor": 0,
+    "ledger_completion_cursor": 0,
+    "journal_review_offset": 0,
     "loop_pid": "",
     "started_at": datetime.now(timezone.utc).isoformat(),
     "watch_interval": int(interval),
@@ -259,24 +302,52 @@ update_state_value() {
 import json
 import os
 import sys
+import time
 
 path, key, value = sys.argv[1:4]
-with open(path, "r", encoding="utf-8") as f:
-    state = json.load(f)
-
-if key in {"feedback_cursor", "loop_pid", "watch_interval"}:
+lock_path = f"{path}.lock"
+stale_after_seconds = 300
+locked = False
+for _ in range(100):
     try:
-        state[key] = int(value)
-    except ValueError:
-        state[key] = value
-else:
-    state[key] = value
+        os.mkdir(lock_path)
+        locked = True
+        break
+    except FileExistsError:
+        try:
+            age = time.time() - os.stat(lock_path).st_mtime
+            if age > stale_after_seconds:
+                os.rmdir(lock_path)
+                continue
+        except OSError:
+            pass
+        time.sleep(0.05)
 
-tmp_path = f"{path}.tmp"
-with open(tmp_path, "w", encoding="utf-8") as f:
-    json.dump(state, f, indent=2)
-    f.write("\n")
-os.replace(tmp_path, path)
+if not locked:
+    raise SystemExit(f"Error: timed out waiting for state lock {lock_path}")
+
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+
+    if key in {"feedback_cursor", "journal_review_offset", "ledger_completion_cursor", "loop_pid", "watch_interval"}:
+        try:
+            state[key] = int(value)
+        except ValueError:
+            state[key] = value
+    else:
+        state[key] = value
+
+    tmp_path = f"{path}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(state, f, indent=2)
+        f.write("\n")
+    os.replace(tmp_path, path)
+finally:
+    try:
+        os.rmdir(lock_path)
+    except OSError as exc:
+        print(f"Warning: could not remove state lock {lock_path}: {exc}", file=sys.stderr)
 PY
 }
 
@@ -340,15 +411,16 @@ PY
 install_claude_project_hooks() {
   local stop_command="$1"
   local git_command="$2"
+  local task_command="$3"
   local settings_path="$PROJECT_DIR/.claude/settings.local.json"
 
   mkdir -p "$(dirname "$settings_path")"
-  python3 - "$settings_path" "$stop_command" "$git_command" <<'PY'
+  python3 - "$settings_path" "$stop_command" "$git_command" "$task_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command, git_command = sys.argv[1:4]
+path, stop_command, git_command, task_command = sys.argv[1:5]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -402,6 +474,15 @@ if not has_command("PreToolUse", git_command):
                     "command": git_command,
                 }
             ],
+        },
+    )
+
+if not has_command("PreToolUse", task_command):
+    append_group(
+        "PreToolUse",
+        {
+            "matcher": "TaskUpdate",
+            "hooks": [{"type": "command", "command": task_command}],
         },
     )
 
@@ -479,15 +560,16 @@ PY
 
 install_codex_project_hooks() {
   local stop_command="$1"
+  local task_command="$2"
   local hooks_path="$PROJECT_DIR/.codex/hooks.json"
 
   mkdir -p "$(dirname "$hooks_path")"
-  python3 - "$hooks_path" "$stop_command" <<'PY'
+  python3 - "$hooks_path" "$stop_command" "$task_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command = sys.argv[1:3]
+path, stop_command, task_command = sys.argv[1:4]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -501,27 +583,42 @@ hooks = data.setdefault("hooks", {})
 if not isinstance(hooks, dict):
     raise SystemExit(f"Error: {path}.hooks must be a JSON object")
 
-groups = hooks.setdefault("Stop", [])
-if not isinstance(groups, list):
-    raise SystemExit(f"Error: {path}.hooks.Stop must be an array")
+def has_command(event: str, command: str) -> bool:
+    groups = hooks.get(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        handlers = group.get("hooks", [])
+        if not isinstance(handlers, list):
+            continue
+        for handler in handlers:
+            if (
+                isinstance(handler, dict)
+                and handler.get("type") == "command"
+                and handler.get("command") == command
+            ):
+                return True
+    return False
 
-exists = False
-for group in groups:
-    if not isinstance(group, dict):
-        continue
-    handlers = group.get("hooks", [])
-    if not isinstance(handlers, list):
-        continue
-    for handler in handlers:
-        if (
-            isinstance(handler, dict)
-            and handler.get("type") == "command"
-            and handler.get("command") == stop_command
-        ):
-            exists = True
+def append_group(event: str, group: dict) -> None:
+    groups = hooks.setdefault(event, [])
+    if not isinstance(groups, list):
+        raise SystemExit(f"Error: {path}.hooks.{event} must be an array")
+    groups.append(group)
 
-if not exists:
-    groups.append({"hooks": [{"type": "command", "command": stop_command}]})
+if not has_command("Stop", stop_command):
+    append_group("Stop", {"hooks": [{"type": "command", "command": stop_command}]})
+
+if not has_command("PreToolUse", task_command):
+    append_group(
+        "PreToolUse",
+        {
+            "matcher": "^update_plan$",
+            "hooks": [{"type": "command", "command": task_command}],
+        },
+    )
 
 tmp_path = f"{path}.tmp"
 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -533,29 +630,31 @@ PY
 
 install_project_hooks() {
   local host_provider="$1"
-  local stop_command git_command
+  local stop_command git_command task_command
   stop_command="$(hook_command_path "watch-stop.sh")"
+  task_command="$(hook_command_path "watch-task-check.sh")"
 
   case "$host_provider" in
     claude)
       git_command="$(hook_command_path "watch-git-check.sh")"
-      install_claude_project_hooks "$stop_command" "$git_command"
+      install_claude_project_hooks "$stop_command" "$git_command" "$task_command"
       ;;
     codex)
-      install_codex_project_hooks "$stop_command"
+      install_codex_project_hooks "$stop_command" "$task_command"
       ;;
   esac
 }
 
 remove_project_hooks() {
   local host_provider="$1"
-  local stop_commands git_commands combined_commands
+  local stop_commands git_commands task_commands combined_commands
 
   case "$host_provider" in
     claude)
       stop_commands="$(project_hook_commands_json "watch-stop.sh")"
       git_commands="$(project_hook_commands_json "watch-git-check.sh")"
-      combined_commands="$(python3 - "$stop_commands" "$git_commands" <<'PY'
+      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
+      combined_commands="$(python3 - "$stop_commands" "$git_commands" "$task_commands" <<'PY'
 import json
 import sys
 
@@ -571,7 +670,20 @@ PY
       ;;
     codex)
       stop_commands="$(project_hook_commands_json "watch-stop.sh")"
-      remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$stop_commands"
+      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
+      combined_commands="$(python3 - "$stop_commands" "$task_commands" <<'PY'
+import json
+import sys
+
+combined = []
+for raw in sys.argv[1:]:
+    for value in json.loads(raw):
+        if value not in combined:
+            combined.append(value)
+json.dump(combined, sys.stdout)
+PY
+)"
+      remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$combined_commands"
       ;;
   esac
 }
@@ -648,6 +760,16 @@ cmd_start() {
   local watcher_provider
   watcher_provider="$(json_value "watcher_provider")"
   echo "Watch mode on. ${watcher_alias} (${watcher_provider:-unknown}) will review asynchronously every ${interval}s."
+  local watch_cmd
+  watch_cmd="$(watch_command_display)"
+  cat <<EOF
+Watch ledger contract:
+- Before marking a todo/task complete, run: $watch_cmd intent "what + why + expected validation"
+- Check feedback with: $watch_cmd check
+- If feedback exists, record a disposition before completing: $watch_cmd feedback accept|deny|park "reason"
+- Optional context: $watch_cmd progress "..." and $watch_cmd outcome "..."
+- Emergency bypass for one gate: WATCH_LEDGER_OFF=1
+EOF
 }
 
 cmd_stop() {
@@ -736,6 +858,54 @@ cmd_log() {
   printf '[%s] %s\n' "$(date -Iseconds)" "$*" >> "$JOURNAL_FILE"
 }
 
+cmd_tagged_log() {
+  local tag="$1"
+  shift
+  if [[ $# -eq 0 ]]; then
+    echo "Error: $tag requires a one-line summary" >&2
+    exit 1
+  fi
+  cmd_log "$tag: $*"
+}
+
+cmd_intent() {
+  cmd_tagged_log "intent" "$@"
+}
+
+cmd_progress() {
+  cmd_tagged_log "progress" "$@"
+}
+
+cmd_outcome() {
+  cmd_tagged_log "outcome" "$@"
+}
+
+cmd_feedback() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "watch mode is not active"
+    return
+  fi
+
+  if [[ $# -lt 2 ]]; then
+    echo "Error: feedback requires accept|deny|park and a reason" >&2
+    exit 1
+  fi
+
+  local action="$1"
+  shift
+  case "$action" in
+    accept|deny|park) ;;
+    *)
+      echo "Error: feedback action must be accept, deny, or park" >&2
+      exit 1
+      ;;
+  esac
+
+  cmd_log "feedback-action: $action $*"
+  touch "$FEEDBACK_FILE"
+  update_state_value "feedback_cursor" "$(file_size "$FEEDBACK_FILE")"
+}
+
 cmd_check() {
   local strict=false
   while [[ $# -gt 0 ]]; do
@@ -759,16 +929,20 @@ cmd_check() {
     if [[ "$strict" == false ]]; then
       echo "watch mode is not active"
     fi
-    return
+    return 0
   fi
 
   touch "$FEEDBACK_FILE"
-  local cursor size blocked=false unread=""
-  cursor="$(json_value "feedback_cursor")"
+  local cursor size blocked=false unread="" watch_cmd
+  watch_cmd="$(watch_command_display)"
+  cursor="$(state_int_value "feedback_cursor" 0)"
   if ! [[ "$cursor" =~ ^[0-9]+$ ]]; then
     cursor=0
   fi
-  size="$(wc -c < "$FEEDBACK_FILE" | tr -d '[:space:]')"
+  size="$(file_size "$FEEDBACK_FILE")"
+  if [[ "$cursor" -gt "$size" ]]; then
+    cursor=0
+  fi
 
   if [[ "$size" -gt "$cursor" ]]; then
     unread="$(tail -c +"$((cursor + 1))" "$FEEDBACK_FILE")"
@@ -776,10 +950,12 @@ cmd_check() {
       {
         echo "Unread watcher feedback requires attention before continuing:"
         printf '%s\n' "$unread"
+        echo "Record a disposition with: $watch_cmd feedback accept|deny|park \"reason\""
       } >&2
       blocked=true
     else
       printf '%s\n' "$unread"
+      echo "Feedback remains unread until you run: $watch_cmd feedback accept|deny|park \"reason\""
     fi
   else
     if [[ "$strict" == false ]]; then
@@ -787,13 +963,11 @@ cmd_check() {
     fi
   fi
 
-  update_state_value "feedback_cursor" "$size"
-
   if [[ "$strict" == true ]]; then
     local pid
     pid="$(state_loop_pid)"
     if [[ -z "$pid" ]] || ! live_pid "$pid"; then
-      echo "watcher loop is not running; run ./watch.sh status or ./watch.sh stop" >&2
+      echo "watcher loop is not running; run $watch_cmd status or $watch_cmd stop" >&2
       blocked=true
     fi
     if [[ "$blocked" == true ]]; then
@@ -802,13 +976,105 @@ cmd_check() {
   fi
 }
 
+cmd_gate() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    return 0
+  fi
+
+  if [[ "${WATCH_LEDGER_OFF:-}" == "1" ]]; then
+    cmd_log "outcome: ledger-gate bypassed (WATCH_LEDGER_OFF)"
+    echo "watch ledger gate bypassed by WATCH_LEDGER_OFF=1" >&2
+    return 0
+  fi
+
+  touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
+
+  local analysis watch_cmd
+  watch_cmd="$(watch_command_display)"
+  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" 2>/dev/null <<'PY'
+import json
+import os
+import sys
+
+state_path, journal_path, feedback_path = sys.argv[1:4]
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+def int_value(key):
+    try:
+        return int(state.get(key, 0))
+    except (TypeError, ValueError):
+        return 0
+
+ledger_cursor = max(0, int_value("ledger_completion_cursor"))
+feedback_cursor = max(0, int_value("feedback_cursor"))
+
+journal_size = os.path.getsize(journal_path) if os.path.exists(journal_path) else 0
+feedback_size = os.path.getsize(feedback_path) if os.path.exists(feedback_path) else 0
+
+if ledger_cursor > journal_size:
+    ledger_cursor = 0
+if feedback_cursor > feedback_size:
+    feedback_cursor = 0
+
+with open(journal_path, "rb") as f:
+    f.seek(ledger_cursor)
+    journal_delta = f.read().decode("utf-8", errors="replace")
+
+has_intent = any("] intent: " in line for line in journal_delta.splitlines())
+has_unread_feedback = feedback_size > feedback_cursor
+
+print("1" if has_intent else "0")
+print("1" if has_unread_feedback else "0")
+print(journal_size)
+PY
+  )"; then
+    echo "watch ledger gate could not read state; allowing completion" >&2
+    return 0
+  fi
+
+  local has_intent has_unread_feedback journal_size blocked=false
+  has_intent="$(printf '%s\n' "$analysis" | sed -n '1p')"
+  has_unread_feedback="$(printf '%s\n' "$analysis" | sed -n '2p')"
+  journal_size="$(printf '%s\n' "$analysis" | sed -n '3p')"
+
+  if [[ "$has_intent" != "1" ]]; then
+    echo "Watch ledger requires intent before task completion." >&2
+    echo "Run: $watch_cmd intent \"what + why + expected validation\"" >&2
+    blocked=true
+  fi
+
+  if [[ "$has_unread_feedback" == "1" ]]; then
+    echo "Unread watcher feedback requires disposition before task completion." >&2
+    echo "Run: $watch_cmd feedback accept|deny|park \"reason\"" >&2
+    blocked=true
+  fi
+
+  if [[ "$blocked" == true ]]; then
+    exit 2
+  fi
+
+  update_state_value "ledger_completion_cursor" "$journal_size"
+}
+
 cmd_hook_stop() {
   if [[ ! -f "$STATE_FILE" ]]; then
     return 0
   fi
 
-  cmd_log "Stop hook: turn completed"
-  cmd_check --strict
+  touch "$FEEDBACK_FILE"
+  local cursor size
+  cursor="$(state_int_value "feedback_cursor" 0)"
+  size="$(file_size "$FEEDBACK_FILE")"
+  if [[ "$cursor" -gt "$size" ]]; then
+    cursor=0
+  fi
+  if [[ "$size" -gt "$cursor" ]]; then
+    local watch_cmd
+    watch_cmd="$(watch_command_display)"
+    echo "Unread watcher feedback is available; run $watch_cmd check" >&2
+  fi
+  return 0
 }
 
 invoke_watcher() {
@@ -885,7 +1151,10 @@ cmd_loop() {
     sleep "$interval"
     [[ -f "$PID_FILE" && -f "$STATE_FILE" ]] || break
 
-    local watcher_alias host_provider watcher_provider watcher_json journal_tail diff_stat prompt_file output
+    local watcher_alias host_provider watcher_provider watcher_json journal_tail journal_slice_file journal_new_offset
+    local diff_stat git_status feedback_status feedback_cursor feedback_size prompt_file output output_last_line
+    local watch_cmd
+    watch_cmd="$(watch_command_display)"
     watcher_alias="$(json_value "watcher_alias")"
     host_provider="$(json_value "host_provider")"
 
@@ -902,22 +1171,73 @@ print(watcher.get("provider", ""))
 PY
 )"
 
-    journal_tail="$(tail -n 80 "$JOURNAL_FILE" 2>/dev/null || true)"
+    journal_slice_file="$(mktemp)"
+    if ! journal_new_offset="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$journal_slice_file" 2>/dev/null <<'PY'
+import json
+import os
+import sys
+
+state_path, journal_path, output_path = sys.argv[1:4]
+with open(state_path, "r", encoding="utf-8") as f:
+    state = json.load(f)
+
+try:
+    offset = int(state.get("journal_review_offset", 0))
+except (TypeError, ValueError):
+    offset = 0
+
+size = os.path.getsize(journal_path) if os.path.exists(journal_path) else 0
+offset = max(0, min(offset, size))
+
+with open(output_path, "w", encoding="utf-8") as out:
+    if offset < size:
+        with open(journal_path, "rb") as journal:
+            journal.seek(offset)
+            out.write(journal.read().decode("utf-8", errors="replace"))
+    else:
+        out.write("(no new journal entries since last review)\n")
+
+print(size)
+PY
+    )"; then
+      tail -n 80 "$JOURNAL_FILE" > "$journal_slice_file" 2>/dev/null || true
+      journal_new_offset="$(file_size "$JOURNAL_FILE")"
+    fi
+    journal_tail="$(cat "$journal_slice_file")"
+    rm -f "$journal_slice_file"
+
     diff_stat="$(git diff --stat 2>/dev/null || true)"
+    git_status="$(git status --short 2>/dev/null || true)"
+    feedback_size="$(file_size "$FEEDBACK_FILE")"
+    feedback_cursor="$(state_int_value "feedback_cursor" 0)"
+    if [[ "$feedback_cursor" -gt "$feedback_size" ]]; then
+      feedback_cursor=0
+    fi
+    if [[ "$feedback_size" -gt "$feedback_cursor" ]]; then
+      feedback_status="unread feedback pending; primary must run $watch_cmd feedback accept|deny|park"
+    else
+      feedback_status="clear"
+    fi
     prompt_file="$(mktemp)"
     cat > "$prompt_file" <<EOF
 You are watching a coding session asynchronously.
 Primary provider: $host_provider
 Watcher provider: $watcher_provider
 
-Recent primary journal:
+New primary journal since last watcher pass:
 $journal_tail
+
+Current git status --short:
+$git_status
 
 Current git diff stat:
 $diff_stat
 
+Unread feedback disposition status:
+$feedback_status
+
 Write at most one concise note if there is a concrete risk, missed requirement, or likely bug.
-If there is no actionable feedback, output exactly NO_FEEDBACK.
+If there is no actionable feedback, output a single line: NO_FEEDBACK.
 EOF
 
     if ! output="$(invoke_watcher "$watcher_json" "$prompt_file" 2>&1)"; then
@@ -927,8 +1247,11 @@ EOF
     fi
     rm -f "$prompt_file"
 
+    update_state_value "journal_review_offset" "$journal_new_offset"
+
     output="$(printf '%s' "$output" | sed '/^[[:space:]]*$/d')"
-    if [[ -n "$output" && "$output" != "NO_FEEDBACK" ]]; then
+    output_last_line="$(printf '%s\n' "$output" | tail -n 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    if [[ -n "$output" && "$output_last_line" != "NO_FEEDBACK" ]]; then
       printf '\n[%s] [%s] %s\n' "$(date -Iseconds)" "${watcher_provider:-watcher}" "$output" >> "$FEEDBACK_FILE"
     fi
   done
@@ -946,7 +1269,12 @@ case "$command" in
   stop) cmd_stop "$@" ;;
   status) cmd_status "$@" ;;
   log) cmd_log "$@" ;;
+  intent) cmd_intent "$@" ;;
+  progress) cmd_progress "$@" ;;
+  outcome) cmd_outcome "$@" ;;
+  feedback) cmd_feedback "$@" ;;
   check) cmd_check "$@" ;;
+  gate) cmd_gate "$@" ;;
   hook-stop) cmd_hook_stop "$@" ;;
   loop) cmd_loop "$@" ;;
   -h|--help) usage ;;

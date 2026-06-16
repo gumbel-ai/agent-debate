@@ -30,24 +30,24 @@ Watch mode stores project-local runtime files under `.agent-debate/watch/`:
 - `loop.pid` — background watcher process
 - `archive/` — stopped-session snapshots
 
-The watcher reads recent `journal.md` entries plus `git diff --stat`. If it sees a concrete issue, it appends feedback to `feedback.md`; otherwise it returns `NO_FEEDBACK`.
+The watcher reads new `journal.md` entries, `git status --short`, and `git diff --stat`. If it sees a concrete issue, it appends feedback to `feedback.md`; otherwise it returns `NO_FEEDBACK`.
 
 When started from Claude Code or Codex, watch mode also installs project-local hook entries for the active session:
 
-- Claude Code: `.claude/settings.local.json` gets a `Stop` hook that logs/checks once per turn, plus a `PreToolUse` hook that gates `git commit`.
-- Codex CLI: `.codex/hooks.json` gets a `Stop` hook that logs/checks once per turn. Codex may require reviewing and trusting the project hook with `/hooks` before it runs.
+- Claude Code: `.claude/settings.local.json` gets an advisory `Stop` hook, a `PreToolUse` hook that gates `TaskUpdate` completion, and a `PreToolUse` hook that gates `git commit`.
+- Codex CLI: `.codex/hooks.json` gets an advisory `Stop` hook and a `PreToolUse` hook that gates `update_plan` when a new task is marked completed. Codex may require reviewing and trusting the project hooks with `/hooks` before they run.
 
 `watch.sh stop` removes only the hook commands that watch mode installed and preserves unrelated settings.
 
 ## Timing
 
-- **Primary logs:** hook-backed plus optional manual notes. The Stop hook records a turn-completed entry. The primary can still run `watch.sh log "<one-line summary>"` after meaningful milestones to give the watcher better context.
+- **Primary logs:** the primary records ledger context. Before completing a todo/task, run `watch.sh intent "<what + why + expected validation>"`. Optional `watch.sh progress "..."` and `watch.sh outcome "..."` entries give the watcher more context. `watch.sh log "<one-line summary>"` remains available for free-form notes.
 - **Watcher reviews:** interval-driven. Default is every 60 seconds. Override when starting:
 
   ```bash
   WATCH_INTERVAL=30 ./watch.sh start
   ```
 
-- **Primary checks feedback:** hook-backed checkpoints. Hooks call `watch.sh check --strict`, which exits `2` on unread watcher feedback or a stale watcher loop and exits `0` silently when clean. Non-strict `watch.sh check` remains available for manual feedback checks.
+- **Primary checks feedback:** hook-backed checkpoints. The task/todo hook calls `watch.sh gate`, which exits `2` if there is no `intent:` entry since the last successful completion checkpoint, or if watcher feedback has not been dispositioned. Use `watch.sh feedback accept|deny|park "<reason>"` to record a disposition and advance the feedback cursor. `watch.sh check` prints unread feedback but does not mark it handled.
 
-Hook enforcement is intentionally coarse. It checks once per turn and before Claude-run `git commit`, avoiding per-tool logging noise. Gemini and Copilot are outside watch-mode hook support for v1.
+Hook enforcement is intentionally coarse. It checks before todo/task completion and before Claude-run `git commit`, avoiding per-tool logging noise. The Stop hook is advisory and does not write mandatory ledger entries or block the turn. Gemini and Copilot are outside watch-mode hook support for v1.
