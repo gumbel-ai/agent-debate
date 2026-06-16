@@ -619,7 +619,7 @@ is_converged() {
 }
 
 is_plan_converged() {
-  python3 - "$DEBATE_FILE" <<'PY'
+  if python3 - "$DEBATE_FILE" <<'PY'
 import re
 import sys
 
@@ -646,7 +646,14 @@ for line in section.splitlines():
 
 raise SystemExit(1)
 PY
-  [[ $? -eq 0 ]] && ! has_open_disputes
+  then
+    if has_open_disputes; then
+      return 1
+    fi
+    return 0
+  else
+    return 1
+  fi
 }
 
 state_init() {
@@ -1301,6 +1308,8 @@ PY
   fi
 
   rm -f "$prompt_file"
+
+  response="$(printf '%s' "$response" | python3 "$SCRIPT_DIR/agent_response_parser.py")"
 
   # Write response back to debate file
   if [[ -n "$response" ]]; then
