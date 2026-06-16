@@ -192,6 +192,55 @@ class WatchLedgerContractTest(unittest.TestCase):
             self.assertIn("allowing completion", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
+    def test_runtime_instructions_use_resolved_watch_script(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project = self.make_project(tmpdir)
+
+            missing = self.run_watch(project, "gate")
+
+            self.assertEqual(missing.returncode, 2)
+            self.assertNotIn("./watch.sh", missing.stderr)
+            self.assertIn(f"Run: {WATCH} intent", missing.stderr)
+
+            self.run_watch(project, "intent", "handle feedback")
+            (project / ".agent-debate" / "watch" / "feedback.md").write_text("feedback\n")
+
+            blocked = self.run_watch(project, "gate")
+
+            self.assertEqual(blocked.returncode, 2)
+            self.assertNotIn("./watch.sh", blocked.stderr)
+            self.assertIn(f"Run: {WATCH} feedback", blocked.stderr)
+
+            start_project = Path(tmpdir) / "start-project"
+            start_project.mkdir()
+            (start_project / "debate.config.json").write_text(
+                json.dumps(
+                    {
+                        "aliases": {
+                            "dummy": {
+                                "name": "Dummy",
+                                "provider": "dummy",
+                                "command_template": ["/bin/cat"],
+                                "prompt_transport": "stdin",
+                            }
+                        }
+                    }
+                )
+                + "\n"
+            )
+            env = {
+                "AGENT_DEBATE_HOST_PROVIDER": "codex",
+                "WATCH_INTERVAL": "60",
+            }
+            start = self.run_watch(start_project, "start", "--watcher", "dummy", env=env)
+            try:
+                self.assertEqual(start.returncode, 0, start.stderr)
+                self.assertNotIn("./watch.sh", start.stdout)
+                self.assertIn(f"{WATCH} intent", start.stdout)
+                self.assertIn(f"{WATCH} feedback", start.stdout)
+            finally:
+                self.run_watch(start_project, "stop", env=env)
+
     def test_watcher_loop_sees_untracked_files_and_trailing_no_feedback_is_ignored(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             project = self.make_project(tmpdir)

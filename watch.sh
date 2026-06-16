@@ -29,6 +29,10 @@ else
   WATCH_SCRIPT="$PROJECT_DIR/$SCRIPT_SOURCE"
 fi
 
+watch_command_display() {
+  printf '%q' "$WATCH_SCRIPT"
+}
+
 usage() {
   cat <<EOF
 Usage: $(basename "$0") COMMAND
@@ -756,12 +760,14 @@ cmd_start() {
   local watcher_provider
   watcher_provider="$(json_value "watcher_provider")"
   echo "Watch mode on. ${watcher_alias} (${watcher_provider:-unknown}) will review asynchronously every ${interval}s."
-  cat <<'EOF'
+  local watch_cmd
+  watch_cmd="$(watch_command_display)"
+  cat <<EOF
 Watch ledger contract:
-- Before marking a todo/task complete, run: ./watch.sh intent "what + why + expected validation"
-- Check feedback with: ./watch.sh check
-- If feedback exists, record a disposition before completing: ./watch.sh feedback accept|deny|park "reason"
-- Optional context: ./watch.sh progress "..." and ./watch.sh outcome "..."
+- Before marking a todo/task complete, run: $watch_cmd intent "what + why + expected validation"
+- Check feedback with: $watch_cmd check
+- If feedback exists, record a disposition before completing: $watch_cmd feedback accept|deny|park "reason"
+- Optional context: $watch_cmd progress "..." and $watch_cmd outcome "..."
 - Emergency bypass for one gate: WATCH_LEDGER_OFF=1
 EOF
 }
@@ -927,7 +933,8 @@ cmd_check() {
   fi
 
   touch "$FEEDBACK_FILE"
-  local cursor size blocked=false unread=""
+  local cursor size blocked=false unread="" watch_cmd
+  watch_cmd="$(watch_command_display)"
   cursor="$(state_int_value "feedback_cursor" 0)"
   if ! [[ "$cursor" =~ ^[0-9]+$ ]]; then
     cursor=0
@@ -943,12 +950,12 @@ cmd_check() {
       {
         echo "Unread watcher feedback requires attention before continuing:"
         printf '%s\n' "$unread"
-        echo "Record a disposition with: ./watch.sh feedback accept|deny|park \"reason\""
+        echo "Record a disposition with: $watch_cmd feedback accept|deny|park \"reason\""
       } >&2
       blocked=true
     else
       printf '%s\n' "$unread"
-      echo "Feedback remains unread until you run: ./watch.sh feedback accept|deny|park \"reason\""
+      echo "Feedback remains unread until you run: $watch_cmd feedback accept|deny|park \"reason\""
     fi
   else
     if [[ "$strict" == false ]]; then
@@ -960,7 +967,7 @@ cmd_check() {
     local pid
     pid="$(state_loop_pid)"
     if [[ -z "$pid" ]] || ! live_pid "$pid"; then
-      echo "watcher loop is not running; run ./watch.sh status or ./watch.sh stop" >&2
+      echo "watcher loop is not running; run $watch_cmd status or $watch_cmd stop" >&2
       blocked=true
     fi
     if [[ "$blocked" == true ]]; then
@@ -982,7 +989,8 @@ cmd_gate() {
 
   touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
 
-  local analysis
+  local analysis watch_cmd
+  watch_cmd="$(watch_command_display)"
   if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" 2>/dev/null <<'PY'
 import json
 import os
@@ -1032,13 +1040,13 @@ PY
 
   if [[ "$has_intent" != "1" ]]; then
     echo "Watch ledger requires intent before task completion." >&2
-    echo "Run: ./watch.sh intent \"what + why + expected validation\"" >&2
+    echo "Run: $watch_cmd intent \"what + why + expected validation\"" >&2
     blocked=true
   fi
 
   if [[ "$has_unread_feedback" == "1" ]]; then
     echo "Unread watcher feedback requires disposition before task completion." >&2
-    echo "Run: ./watch.sh feedback accept|deny|park \"reason\"" >&2
+    echo "Run: $watch_cmd feedback accept|deny|park \"reason\"" >&2
     blocked=true
   fi
 
@@ -1062,7 +1070,9 @@ cmd_hook_stop() {
     cursor=0
   fi
   if [[ "$size" -gt "$cursor" ]]; then
-    echo "Unread watcher feedback is available; run ./watch.sh check" >&2
+    local watch_cmd
+    watch_cmd="$(watch_command_display)"
+    echo "Unread watcher feedback is available; run $watch_cmd check" >&2
   fi
   return 0
 }
@@ -1143,6 +1153,8 @@ cmd_loop() {
 
     local watcher_alias host_provider watcher_provider watcher_json journal_tail journal_slice_file journal_new_offset
     local diff_stat git_status feedback_status feedback_cursor feedback_size prompt_file output output_last_line
+    local watch_cmd
+    watch_cmd="$(watch_command_display)"
     watcher_alias="$(json_value "watcher_alias")"
     host_provider="$(json_value "host_provider")"
 
@@ -1202,7 +1214,7 @@ PY
       feedback_cursor=0
     fi
     if [[ "$feedback_size" -gt "$feedback_cursor" ]]; then
-      feedback_status="unread feedback pending; primary must run ./watch.sh feedback accept|deny|park"
+      feedback_status="unread feedback pending; primary must run $watch_cmd feedback accept|deny|park"
     else
       feedback_status="clear"
     fi
