@@ -68,9 +68,11 @@ Two modes:
 - **Auto** — orchestrator runs agents round-robin until they converge or hit max rounds. By default it then runs a Plan phase; pass `--no-plan` to skip. Use `--skip-provider` if you want to participate as one of the agents yourself
   Plan controls: `--no-plan` (disable) and `--plan-rounds N` (default: 2).
 
-## Watch mode
+## Loop mode
 
-Watch mode lets one primary agent work normally while a second model reviews progress asynchronously and writes feedback. In Claude Code and Codex, project-local hooks require a ledger `intent` before todo/task completion and require watcher feedback to be accepted, denied, or parked before completion; Claude also gates `git commit`. Start it by saying "start watch mode"; stop it with "stop watch mode". See [Watch Mode](docs/watch-mode.md) for timing, runtime files, and usage details.
+One agent codes, the other model reviews it in the background, and the coder cannot claim "done" while review feedback sits unread. Works both ways: Claude Code codes while Codex reviews, or the reverse. Say "loop mode on" to start, "loop mode off" to stop — from any project, the system installs globally.
+
+See [How Loop Mode Works](docs/how-loop-mode-works.md) for the 2-minute explanation, and the [Loop Mode reference](docs/loop-mode.md) for commands, timing, and configuration. See [Loop Mode](docs/loop-mode.md) for timing, runtime files, and usage details.
 
 ## How it works
 

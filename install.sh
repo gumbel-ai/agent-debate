@@ -113,19 +113,23 @@ When user says **"implement debate N"**, **"apply plan for debate N"**, or **"im
    - Commands/tests run
    - Any deviations from the plan
 
-### Watch Mode
+### Loop Mode
 
-When user says **"start watch mode"**, **"watch on"**, or **"begin watch"**:
-1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`
-2. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+When user says **"loop mode on"** or **"start loop mode"**:
+1. Run `./loop.sh start --task "<one-line task statement>"` if `./loop.sh` exists, else `~/.agent-debate/loop.sh start --task "..."`. Always pass `--task` so the reviewer knows the goal.
+2. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
+3. If hooks were just installed, they may need a session restart or `/hooks` review before they enforce.
 
-When user says **"stop watch mode"**, **"watch off"**, or **"end watch"**:
-1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`
+When user says **"loop mode off"**, **"stop loop mode"**, **"switch off loop mode"**, or **"shut down loop mode"**:
+1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`
 
-While watch mode is active:
-- Claude Code and Codex hooks checkpoint watcher feedback once per turn; Claude also gates `git commit`
-- After meaningful milestones, run the same script with `log "<one-line summary>"` to give the watcher better context
-- Before claiming done, run `check` if hooks are unavailable or feedback was surfaced, and address any feedback before proceeding
+While loop mode is active (works both ways — Claude codes with Codex reviewing, or Codex codes with Claude reviewing):
+- User prompts are journaled automatically via a UserPromptSubmit hook and auto-distilled into the task statement each reviewer pass; you can still set it explicitly with `task "..."` when the goal changes
+- Hooks gate todo/task completion: run `intent "<what + why + expected validation>"` before marking work complete; the gate also blocks until a task statement exists
+- When reviewer feedback exists, run `check` to read it, then `feedback accept|deny|park "reason"` to disposition it; Claude also gates `git commit`
+- After meaningful milestones, run `log "<one-line summary>"`
+- One-shot gate escape: `bypass "reason"`
+- The loop auto-stops after 2 hours without activity (journal writes or repo changes)
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -140,7 +144,7 @@ When user says **"auto debate"** or asks for an automated multi-agent debate:
 - `~/.claude/agent-debate/agent-guardrails.md` — Rules for all agents (read first)
 - `~/.claude/agent-debate/TEMPLATE.md` — Template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
-- `~/.agent-debate/watch.sh` — Watch mode entrypoint
+- `~/.agent-debate/loop.sh` — Loop mode entrypoint
 - `./debates/` — Project-local debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CLAUDE_EOF
@@ -188,20 +192,23 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
-### Watch Mode
+### Loop Mode
 
-When user says "start watch mode", "watch on", or "begin watch":
-1. Run `./watch.sh start` if `./watch.sh` exists, else `~/.agent-debate/watch.sh start`.
-2. If Codex asks to review/trust the project hook, use `/hooks` to trust the watch-mode Stop hook.
-3. Tell the user: "Watch mode on. <watcher> will review asynchronously every 60s."
+When user says "loop mode on" or "start loop mode":
+1. Run `./loop.sh start --task "<one-line task statement>"` if `./loop.sh` exists, else `~/.agent-debate/loop.sh start --task "..."`. Always pass `--task` so the reviewer knows the goal.
+2. If Codex asks to review/trust the project hooks, use `/hooks` to trust the loop-mode hooks.
+3. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
 
-When user says "stop watch mode", "watch off", or "end watch":
-1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+When user says "loop mode off", "stop loop mode", "switch off loop mode", or "shut down loop mode":
+1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`.
 
-While watch mode is active:
-- Claude Code and Codex hooks checkpoint watcher feedback once per turn; Claude also gates `git commit`.
-- After meaningful milestones, run the same script with `log "<one-line summary>"` to give the watcher better context.
-- Before claiming done, run `check` if hooks are unavailable or feedback was surfaced, and address any feedback before proceeding.
+While loop mode is active (works both ways — Codex codes with Claude reviewing, or Claude codes with Codex reviewing):
+- User prompts are journaled automatically via a UserPromptSubmit hook and auto-distilled into the task statement each reviewer pass; you can still set it explicitly with `task "..."` when the goal changes.
+- Hooks gate plan-item completion: run `intent "<what + why + expected validation>"` before marking work complete; the gate also blocks until a task statement exists.
+- When reviewer feedback exists, run `check` to read it, then `feedback accept|deny|park "reason"` to disposition it.
+- After meaningful milestones, run `log "<one-line summary>"`.
+- One-shot gate escape: `bypass "reason"`.
+- The loop auto-stops after 2 hours without activity (journal writes or repo changes).
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -215,7 +222,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.codex/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.codex/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
-- `~/.agent-debate/watch.sh` — Watch mode entrypoint
+- `~/.agent-debate/loop.sh` — Loop mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 CODEX_EOF
@@ -263,17 +270,17 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
-### Watch Mode
+### Loop Mode
 
-When user says "start watch mode", "watch on", or "begin watch":
-1. Explain that watch mode is currently supported from Claude Code or Codex hosts only.
-2. Do not run `watch.sh start` from Gemini.
+When user says "loop mode on" or "start loop mode":
+1. Explain that loop mode is currently supported from Claude Code or Codex hosts only.
+2. Do not run `loop.sh start` from Gemini.
 
-When user says "stop watch mode", "watch off", or "end watch":
-1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+When user says "loop mode off", "stop loop mode", "switch off loop mode", or "shut down loop mode":
+1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`.
 
-While watch mode is active:
-- Watch mode is supported for Claude Code and Codex hosts. Gemini should use debate mode unless watch support is added.
+While loop mode is active:
+- Loop mode is supported for Claude Code and Codex hosts. Gemini should use debate mode unless loop support is added.
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -287,7 +294,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.gemini/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.gemini/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
-- `~/.agent-debate/watch.sh` — Watch mode entrypoint
+- `~/.agent-debate/loop.sh` — Loop mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 GEMINI_EOF
@@ -335,17 +342,17 @@ When user says "continue debate N" or "respond to debate N":
    - Commands/tests run
    - Any deviations from the plan
 
-### Watch Mode
+### Loop Mode
 
-When user says "start watch mode", "watch on", or "begin watch":
-1. Explain that watch mode is currently supported from Claude Code or Codex hosts only.
-2. Do not run `watch.sh start` from Copilot.
+When user says "loop mode on" or "start loop mode":
+1. Explain that loop mode is currently supported from Claude Code or Codex hosts only.
+2. Do not run `loop.sh start` from Copilot.
 
-When user says "stop watch mode", "watch off", or "end watch":
-1. Run `./watch.sh stop` if `./watch.sh` exists, else `~/.agent-debate/watch.sh stop`.
+When user says "loop mode off", "stop loop mode", "switch off loop mode", or "shut down loop mode":
+1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`.
 
-While watch mode is active:
-- Watch mode is supported for Claude Code and Codex hosts. Copilot should use debate mode unless watch support is added.
+While loop mode is active:
+- Loop mode is supported for Claude Code and Codex hosts. Copilot should use debate mode unless loop support is added.
 
 ### Auto Mode (orchestrator-assisted)
 
@@ -359,7 +366,7 @@ When user says "auto debate" or asks for an automated multi-agent debate:
 - `~/.copilot/agent-debate/agent-guardrails.md` — Behavioral rules for all agents (read this first)
 - `~/.copilot/agent-debate/TEMPLATE.md` — Starting template for new debates
 - `~/.agent-debate/config.json` — Agent aliases and defaults
-- `~/.agent-debate/watch.sh` — Watch mode entrypoint
+- `~/.agent-debate/loop.sh` — Loop mode entrypoint
 - `./debates/` — All debate files, numbered `1-`, `2-`, etc.
 <!-- agent-debate:end -->
 COPILOT_EOF
@@ -457,23 +464,25 @@ install_shared_config() {
   get_file "TEMPLATE.md" "$shared_dir/TEMPLATE.md"
   get_file "orchestrate.sh" "$shared_dir/orchestrate.sh"
   get_file "agent_response_parser.py" "$shared_dir/agent_response_parser.py"
-  get_file "watch.sh" "$shared_dir/watch.sh"
-  get_file "hooks/watch-stop.sh" "$shared_dir/hooks/watch-stop.sh"
-  get_file "hooks/watch-git-check.sh" "$shared_dir/hooks/watch-git-check.sh"
-  get_file "hooks/watch-task-check.sh" "$shared_dir/hooks/watch-task-check.sh"
+  get_file "loop.sh" "$shared_dir/loop.sh"
+  get_file "hooks/loop-stop.sh" "$shared_dir/hooks/loop-stop.sh"
+  get_file "hooks/loop-git-check.sh" "$shared_dir/hooks/loop-git-check.sh"
+  get_file "hooks/loop-task-check.sh" "$shared_dir/hooks/loop-task-check.sh"
+  get_file "hooks/loop-prompt-log.sh" "$shared_dir/hooks/loop-prompt-log.sh"
   chmod +x "$shared_dir/orchestrate.sh"
   chmod +x "$shared_dir/agent_response_parser.py"
-  chmod +x "$shared_dir/watch.sh"
-  chmod +x "$shared_dir/hooks/watch-stop.sh"
-  chmod +x "$shared_dir/hooks/watch-git-check.sh"
-  chmod +x "$shared_dir/hooks/watch-task-check.sh"
+  chmod +x "$shared_dir/loop.sh"
+  chmod +x "$shared_dir/hooks/loop-stop.sh"
+  chmod +x "$shared_dir/hooks/loop-git-check.sh"
+  chmod +x "$shared_dir/hooks/loop-task-check.sh"
+  chmod +x "$shared_dir/hooks/loop-prompt-log.sh"
   echo "  $shared_dir/config.json (default config)"
   echo "  $shared_dir/agent-guardrails.md (auto mode rules)"
   echo "  $shared_dir/TEMPLATE.md (auto mode template)"
   echo "  $shared_dir/orchestrate.sh (auto mode)"
   echo "  $shared_dir/agent_response_parser.py (agent output parser)"
-  echo "  $shared_dir/watch.sh (watch mode)"
-  echo "  $shared_dir/hooks/ (watch mode hooks)"
+  echo "  $shared_dir/loop.sh (loop mode)"
+  echo "  $shared_dir/hooks/ (loop mode hooks)"
 }
 
 uninstall_shared_config() {

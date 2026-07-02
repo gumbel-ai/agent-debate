@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Task/todo completion adapter for watch mode. It is intentionally quiet on success.
+# Task/todo completion adapter for loop mode. It is intentionally quiet on
+# success. Handles Claude TaskUpdate + TodoWrite and Codex update_plan.
 
 set -euo pipefail
 
@@ -21,20 +22,32 @@ def normalized_status(value):
     return str(value).strip().lower()
 
 
-def plan_completed_counts(plan):
-    if not isinstance(plan, list):
+def item_completed_counts(items, text_keys):
+    if not isinstance(items, list):
         return Counter()
 
     completed = Counter()
-    for item in plan:
+    for item in items:
         if not isinstance(item, dict):
             continue
         status = normalized_status(item.get("status", ""))
         if status not in COMPLETED_STATUSES:
             continue
-        step = item.get("step", item.get("text", item.get("content", "")))
-        completed[str(step)] += 1
+        text = ""
+        for key in text_keys:
+            if item.get(key):
+                text = item[key]
+                break
+        completed[str(text)] += 1
     return completed
+
+
+def plan_completed_counts(plan):
+    return item_completed_counts(plan, ("step", "text", "content"))
+
+
+def todo_completed_counts(todos):
+    return item_completed_counts(todos, ("content", "activeForm", "text"))
 
 
 def parse_update_plan_arguments(raw):
@@ -72,6 +85,33 @@ def previous_codex_completed_counts(transcript_path):
     return latest
 
 
+def previous_claude_todo_completed_counts(transcript_path):
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    if not os.path.exists(transcript_path):
+        return None
+
+    latest = None
+    with open(transcript_path, "r", encoding="utf-8") as transcript:
+        for line in transcript:
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = as_dict(entry.get("message"))
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                if block.get("type") != "tool_use" or block.get("name") != "TodoWrite":
+                    continue
+                block_input = as_dict(block.get("input"))
+                latest = todo_completed_counts(block_input.get("todos"))
+    return latest
+
+
 try:
     data = json.loads(os.environ.get("HOOK_INPUT", ""))
 except json.JSONDecodeError:
@@ -84,6 +124,11 @@ should_check = False
 
 if tool_name == "TaskUpdate":
     should_check = normalized_status(tool_input.get("status", "")) in COMPLETED_STATUSES
+elif tool_name == "TodoWrite":
+    current_completed = todo_completed_counts(tool_input.get("todos"))
+    if current_completed:
+        previous_completed = previous_claude_todo_completed_counts(data.get("transcript_path", ""))
+        should_check = previous_completed is None or bool(current_completed - previous_completed)
 elif tool_name == "update_plan":
     current_completed = plan_completed_counts(tool_input.get("plan"))
     if current_completed:
@@ -106,11 +151,11 @@ if [[ "$should_check" != "1" ]]; then
   exit 0
 fi
 
-find_watch_root() {
+find_loop_root() {
   local dir="$1"
 
   while [[ -n "$dir" && "$dir" != "/" ]]; do
-    if [[ -f "$dir/.agent-debate/watch/state.json" ]]; then
+    if [[ -f "$dir/.agent-debate/loop/state.json" ]]; then
       printf '%s' "$dir"
       return
     fi
@@ -124,16 +169,16 @@ if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
   project_dir="$PWD"
 fi
 project_dir="$(cd "$project_dir" && pwd)"
-project_dir="$(find_watch_root "$project_dir")"
+project_dir="$(find_loop_root "$project_dir")"
 
-watch_script="$project_dir/watch.sh"
-if [[ ! -x "$watch_script" ]]; then
-  watch_script="$HOME/.agent-debate/watch.sh"
+loop_script="$project_dir/loop.sh"
+if [[ ! -x "$loop_script" ]]; then
+  loop_script="$HOME/.agent-debate/loop.sh"
 fi
 
-if [[ ! -x "$watch_script" ]]; then
+if [[ ! -x "$loop_script" ]]; then
   exit 0
 fi
 
 cd "$project_dir"
-exec "$watch_script" gate
+exec "$loop_script" gate

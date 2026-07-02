@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# Claude PreToolUse adapter for gating git commit while watch mode is active.
+# Claude PreToolUse adapter for gating git commit while loop mode is active.
+# The hook is registered with a broad Bash matcher; this script parses the
+# command itself and exits quietly for anything that is not a git commit.
 
 set -euo pipefail
 
@@ -113,11 +115,11 @@ if [[ "$is_commit" != "1" ]]; then
   exit 0
 fi
 
-find_watch_root() {
+find_loop_root() {
   local dir="$1"
 
   while [[ -n "$dir" && "$dir" != "/" ]]; do
-    if [[ -f "$dir/.agent-debate/watch/state.json" ]]; then
+    if [[ -f "$dir/.agent-debate/loop/state.json" ]]; then
       printf '%s' "$dir"
       return
     fi
@@ -131,16 +133,16 @@ if [[ -z "$project_dir" || ! -d "$project_dir" ]]; then
   project_dir="$PWD"
 fi
 project_dir="$(cd "$project_dir" && pwd)"
-project_dir="$(find_watch_root "$project_dir")"
+project_dir="$(find_loop_root "$project_dir")"
 
-watch_script="$project_dir/watch.sh"
-if [[ ! -x "$watch_script" ]]; then
-  watch_script="$HOME/.agent-debate/watch.sh"
+loop_script="$project_dir/loop.sh"
+if [[ ! -x "$loop_script" ]]; then
+  loop_script="$HOME/.agent-debate/loop.sh"
 fi
 
-if [[ ! -x "$watch_script" ]]; then
+if [[ ! -x "$loop_script" ]]; then
   exit 0
 fi
 
 cd "$project_dir"
-exec "$watch_script" check --strict
+exec "$loop_script" check --strict

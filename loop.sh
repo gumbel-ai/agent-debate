@@ -1,36 +1,46 @@
 #!/usr/bin/env bash
-# watch.sh — Async watcher feedback for a coding session
+# loop.sh — Async reviewer feedback loop for a coding session
+#
+# One agent codes (the primary), a second model reviews progress in the
+# background (the reviewer) and writes feedback the primary must disposition.
+# Works both ways: Claude Code primary -> Codex reviewer, Codex primary ->
+# Claude reviewer.
 #
 # Usage:
-#   ./watch.sh start [--watcher alias]
-#   ./watch.sh stop
-#   ./watch.sh status
-#   ./watch.sh log "one-line summary"
-#   ./watch.sh intent "what + why + expected validation"
-#   ./watch.sh progress "what changed + current risk"
-#   ./watch.sh outcome "files changed + checks run + remaining risk"
-#   ./watch.sh feedback accept|deny|park "summary/reason"
-#   ./watch.sh check [--strict]
+#   ./loop.sh start [--reviewer alias] [--task "task statement"]
+#   ./loop.sh stop
+#   ./loop.sh status
+#   ./loop.sh task "task statement"
+#   ./loop.sh log "one-line summary"
+#   ./loop.sh intent "what + why + expected validation"
+#   ./loop.sh progress "what changed + current risk"
+#   ./loop.sh outcome "files changed + checks run + remaining risk"
+#   ./loop.sh feedback accept|deny|park "summary/reason"
+#   ./loop.sh check [--strict]
+#   ./loop.sh bypass ["reason"]
 
 set -euo pipefail
 
 PROJECT_DIR="$(pwd)"
-WATCH_DIR="$PROJECT_DIR/.agent-debate/watch"
-STATE_FILE="$WATCH_DIR/state.json"
-JOURNAL_FILE="$WATCH_DIR/journal.md"
-FEEDBACK_FILE="$WATCH_DIR/feedback.md"
-PID_FILE="$WATCH_DIR/loop.pid"
+LOOP_DIR="$PROJECT_DIR/.agent-debate/loop"
+STATE_FILE="$LOOP_DIR/state.json"
+JOURNAL_FILE="$LOOP_DIR/journal.md"
+FEEDBACK_FILE="$LOOP_DIR/feedback.md"
+PID_FILE="$LOOP_DIR/loop.pid"
 DEFAULT_INTERVAL=60
+DEFAULT_IDLE_TIMEOUT=7200
+DIFF_BYTE_CAP=20000
+SYSTEM_TAG="[loop-system]"
 
 SCRIPT_SOURCE="${BASH_SOURCE[0]}"
 if [[ "$SCRIPT_SOURCE" = /* ]]; then
-  WATCH_SCRIPT="$SCRIPT_SOURCE"
+  LOOP_SCRIPT="$SCRIPT_SOURCE"
 else
-  WATCH_SCRIPT="$PROJECT_DIR/$SCRIPT_SOURCE"
+  LOOP_SCRIPT="$PROJECT_DIR/$SCRIPT_SOURCE"
 fi
 
-watch_command_display() {
-  printf '%q' "$WATCH_SCRIPT"
+loop_command_display() {
+  printf '%q' "$LOOP_SCRIPT"
 }
 
 usage() {
@@ -38,18 +48,20 @@ usage() {
 Usage: $(basename "$0") COMMAND
 
 Commands:
-  start [--watcher alias]  Start watch mode for this project
-  stop                     Stop watch mode and archive the session files
-  status                   Show active state and recent watcher feedback
+  start [--reviewer alias] [--task "..."]  Start loop mode for this project
+  stop                     Stop loop mode and archive the session files
+  status                   Show active state and recent reviewer feedback
+  task "statement"         Set or update the task statement shown to the reviewer
   log "summary"            Append a primary-agent activity note
   intent "summary"         Append a structured intent ledger entry
   progress "summary"       Append a structured progress ledger entry
   outcome "summary"        Append a structured outcome ledger entry
   feedback ACTION "reason" Record feedback disposition; ACTION is accept, deny, or park
   check [--strict]         Print unread feedback; strict exits 2 on blockers
+  bypass ["reason"]        Allow the next ledger gate to pass once
   gate                     Internal task-completion ledger gate
   hook-stop                Internal Stop-hook checkpoint
-  loop                     Internal background watcher loop
+  run-loop                 Internal background reviewer loop
 EOF
 }
 
@@ -68,7 +80,7 @@ detect_host_provider() {
   fi
 }
 
-default_watcher_alias() {
+default_reviewer_alias() {
   local host_provider="$1"
   case "$host_provider" in
     claude) printf 'codex' ;;
@@ -145,7 +157,7 @@ else:
 
 if alias not in aliases:
     available = ", ".join(sorted(aliases.keys()))
-    fail(f"unknown watcher alias '{alias}'. Available: {available}")
+    fail(f"unknown reviewer alias '{alias}'. Available: {available}")
 
 spec = aliases[alias]
 if not isinstance(spec, dict):
@@ -262,30 +274,42 @@ file_size() {
 
 write_initial_state() {
   local host_provider="$1"
-  local watcher_alias="$2"
-  local watcher_json="$3"
+  local reviewer_alias="$2"
+  local reviewer_json="$3"
   local interval="$4"
+  local task="$5"
+  local idle_timeout="$6"
 
-  python3 - "$STATE_FILE" "$host_provider" "$watcher_alias" "$watcher_json" "$JOURNAL_FILE" "$FEEDBACK_FILE" "$interval" <<'PY'
+  python3 - "$STATE_FILE" "$host_provider" "$reviewer_alias" "$reviewer_json" "$JOURNAL_FILE" "$FEEDBACK_FILE" "$interval" "$task" "$idle_timeout" <<'PY'
 import json
 import os
 import sys
+import time
 from datetime import datetime, timezone
 
-state_path, host_provider, watcher_alias, watcher_json, journal_path, feedback_path, interval = sys.argv[1:8]
-watcher = json.loads(watcher_json)
+state_path, host_provider, reviewer_alias, reviewer_json, journal_path, feedback_path, interval, task, idle_timeout = sys.argv[1:10]
+reviewer = json.loads(reviewer_json)
 state = {
     "host_provider": host_provider,
-    "watcher_provider": watcher.get("provider", ""),
-    "watcher_alias": watcher_alias,
+    "reviewer_provider": reviewer.get("provider", ""),
+    "reviewer_alias": reviewer_alias,
+    "task": task,
     "journal_path": journal_path,
     "feedback_path": feedback_path,
     "feedback_cursor": 0,
+    "feedback_seen_cursor": 0,
     "ledger_completion_cursor": 0,
+    "ledger_bypass_once": 0,
     "journal_review_offset": 0,
+    "user_distill_offset": 0,
+    "last_review_signature": "",
+    "last_change_at": int(time.time()),
+    "consecutive_failures": 0,
+    "last_failure_message": "",
     "loop_pid": "",
     "started_at": datetime.now(timezone.utc).isoformat(),
-    "watch_interval": int(interval),
+    "loop_interval": int(interval),
+    "idle_timeout": int(idle_timeout),
 }
 tmp_path = f"{state_path}.tmp"
 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -326,11 +350,25 @@ for _ in range(100):
 if not locked:
     raise SystemExit(f"Error: timed out waiting for state lock {lock_path}")
 
+INT_KEYS = {
+    "feedback_cursor",
+    "feedback_seen_cursor",
+    "journal_review_offset",
+    "user_distill_offset",
+    "ledger_completion_cursor",
+    "ledger_bypass_once",
+    "consecutive_failures",
+    "last_change_at",
+    "loop_pid",
+    "loop_interval",
+    "idle_timeout",
+}
+
 try:
     with open(path, "r", encoding="utf-8") as f:
         state = json.load(f)
 
-    if key in {"feedback_cursor", "journal_review_offset", "ledger_completion_cursor", "loop_pid", "watch_interval"}:
+    if key in INT_KEYS:
         try:
             state[key] = int(value)
         except ValueError:
@@ -367,8 +405,8 @@ state_loop_pid() {
   printf '%s' "$pid"
 }
 
-ensure_watch_dir() {
-  mkdir -p "$WATCH_DIR"
+ensure_loop_dir() {
+  mkdir -p "$LOOP_DIR"
   touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
 }
 
@@ -382,28 +420,29 @@ hook_command_path() {
   local shared_path="$HOME/.agent-debate/hooks/$script_name"
   local project_path="$PROJECT_DIR/hooks/$script_name"
 
-  if [[ -x "$shared_path" ]]; then
-    printf '%s' "$shared_path"
-  elif [[ -x "$project_path" ]]; then
+  if [[ -x "$project_path" ]]; then
     printf '%s' "$project_path"
+  elif [[ -x "$shared_path" ]]; then
+    printf '%s' "$shared_path"
   else
     printf '%s' "$shared_path"
   fi
 }
 
 project_hook_commands_json() {
-  local script_name="$1"
-  local shared_path="$HOME/.agent-debate/hooks/$script_name"
-  local project_path="$PROJECT_DIR/hooks/$script_name"
-
-  python3 - "$shared_path" "$project_path" <<'PY'
+  python3 - "$HOME/.agent-debate/hooks" "$PROJECT_DIR/hooks" "$@" <<'PY'
 import json
 import sys
 
+shared_dir, project_dir = sys.argv[1:3]
+names = sys.argv[3:]
+
 commands = []
-for value in sys.argv[1:]:
-    if value and value not in commands:
-        commands.append(value)
+for name in names:
+    for base in (shared_dir, project_dir):
+        value = f"{base}/{name}"
+        if value not in commands:
+            commands.append(value)
 json.dump(commands, sys.stdout)
 PY
 }
@@ -412,15 +451,16 @@ install_claude_project_hooks() {
   local stop_command="$1"
   local git_command="$2"
   local task_command="$3"
+  local prompt_command="$4"
   local settings_path="$PROJECT_DIR/.claude/settings.local.json"
 
   mkdir -p "$(dirname "$settings_path")"
-  python3 - "$settings_path" "$stop_command" "$git_command" "$task_command" <<'PY'
+  python3 - "$settings_path" "$stop_command" "$git_command" "$task_command" "$prompt_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command, git_command, task_command = sys.argv[1:5]
+path, stop_command, git_command, task_command, prompt_command = sys.argv[1:6]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -462,18 +502,14 @@ def append_group(event: str, group: dict) -> None:
 if not has_command("Stop", stop_command):
     append_group("Stop", {"hooks": [{"type": "command", "command": stop_command}]})
 
+# The git hook script parses the Bash command itself and exits quietly for
+# anything that is not a `git commit`, so a broad matcher is safe.
 if not has_command("PreToolUse", git_command):
     append_group(
         "PreToolUse",
         {
             "matcher": "Bash",
-            "hooks": [
-                {
-                    "type": "command",
-                    "if": "Bash(git commit*)",
-                    "command": git_command,
-                }
-            ],
+            "hooks": [{"type": "command", "command": git_command}],
         },
     )
 
@@ -481,10 +517,13 @@ if not has_command("PreToolUse", task_command):
     append_group(
         "PreToolUse",
         {
-            "matcher": "TaskUpdate",
+            "matcher": "TaskUpdate|TodoWrite",
             "hooks": [{"type": "command", "command": task_command}],
         },
     )
+
+if not has_command("UserPromptSubmit", prompt_command):
+    append_group("UserPromptSubmit", {"hooks": [{"type": "command", "command": prompt_command}]})
 
 tmp_path = f"{path}.tmp"
 with open(tmp_path, "w", encoding="utf-8") as f:
@@ -561,15 +600,16 @@ PY
 install_codex_project_hooks() {
   local stop_command="$1"
   local task_command="$2"
+  local prompt_command="$3"
   local hooks_path="$PROJECT_DIR/.codex/hooks.json"
 
   mkdir -p "$(dirname "$hooks_path")"
-  python3 - "$hooks_path" "$stop_command" "$task_command" <<'PY'
+  python3 - "$hooks_path" "$stop_command" "$task_command" "$prompt_command" <<'PY'
 import json
 import os
 import sys
 
-path, stop_command, task_command = sys.argv[1:4]
+path, stop_command, task_command, prompt_command = sys.argv[1:5]
 
 if os.path.exists(path) and os.path.getsize(path) > 0:
     with open(path, "r", encoding="utf-8") as f:
@@ -620,6 +660,9 @@ if not has_command("PreToolUse", task_command):
         },
     )
 
+if not has_command("UserPromptSubmit", prompt_command):
+    append_group("UserPromptSubmit", {"hooks": [{"type": "command", "command": prompt_command}]})
+
 tmp_path = f"{path}.tmp"
 with open(tmp_path, "w", encoding="utf-8") as f:
     json.dump(data, f, indent=2)
@@ -630,72 +673,56 @@ PY
 
 install_project_hooks() {
   local host_provider="$1"
-  local stop_command git_command task_command
-  stop_command="$(hook_command_path "watch-stop.sh")"
-  task_command="$(hook_command_path "watch-task-check.sh")"
+  local stop_command git_command task_command prompt_command
+  stop_command="$(hook_command_path "loop-stop.sh")"
+  task_command="$(hook_command_path "loop-task-check.sh")"
+  prompt_command="$(hook_command_path "loop-prompt-log.sh")"
 
   case "$host_provider" in
     claude)
-      git_command="$(hook_command_path "watch-git-check.sh")"
-      install_claude_project_hooks "$stop_command" "$git_command" "$task_command"
+      git_command="$(hook_command_path "loop-git-check.sh")"
+      install_claude_project_hooks "$stop_command" "$git_command" "$task_command" "$prompt_command"
       ;;
     codex)
-      install_codex_project_hooks "$stop_command" "$task_command"
+      install_codex_project_hooks "$stop_command" "$task_command" "$prompt_command"
       ;;
   esac
 }
 
 remove_project_hooks() {
   local host_provider="$1"
-  local stop_commands git_commands task_commands combined_commands
+  local combined_commands
+
+  combined_commands="$(project_hook_commands_json \
+    "loop-stop.sh" "loop-git-check.sh" "loop-task-check.sh" "loop-prompt-log.sh")"
 
   case "$host_provider" in
     claude)
-      stop_commands="$(project_hook_commands_json "watch-stop.sh")"
-      git_commands="$(project_hook_commands_json "watch-git-check.sh")"
-      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
-      combined_commands="$(python3 - "$stop_commands" "$git_commands" "$task_commands" <<'PY'
-import json
-import sys
-
-combined = []
-for raw in sys.argv[1:]:
-    for value in json.loads(raw):
-        if value not in combined:
-            combined.append(value)
-json.dump(combined, sys.stdout)
-PY
-)"
       remove_project_hook_commands "$PROJECT_DIR/.claude/settings.local.json" "$combined_commands"
       ;;
     codex)
-      stop_commands="$(project_hook_commands_json "watch-stop.sh")"
-      task_commands="$(project_hook_commands_json "watch-task-check.sh")"
-      combined_commands="$(python3 - "$stop_commands" "$task_commands" <<'PY'
-import json
-import sys
-
-combined = []
-for raw in sys.argv[1:]:
-    for value in json.loads(raw):
-        if value not in combined:
-            combined.append(value)
-json.dump(combined, sys.stdout)
-PY
-)"
       remove_project_hook_commands "$PROJECT_DIR/.codex/hooks.json" "$combined_commands"
       ;;
   esac
 }
 
 cmd_start() {
-  local watcher_alias=""
+  local reviewer_alias=""
+  local task=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --watcher)
-        watcher_alias="${2:-}"
-        if [[ -z "$watcher_alias" ]]; then
-          echo "Error: --watcher requires an alias" >&2
+      --reviewer)
+        reviewer_alias="${2:-}"
+        if [[ -z "$reviewer_alias" ]]; then
+          echo "Error: --reviewer requires an alias" >&2
+          exit 1
+        fi
+        shift 2
+        ;;
+      --task)
+        task="${2:-}"
+        if [[ -z "$task" ]]; then
+          echo "Error: --task requires a task statement" >&2
           exit 1
         fi
         shift 2
@@ -711,17 +738,17 @@ cmd_start() {
     esac
   done
 
-  ensure_watch_dir
+  ensure_loop_dir
 
   local existing_pid
   existing_pid="$(state_loop_pid)"
   if [[ -n "$existing_pid" ]] && live_pid "$existing_pid"; then
-    echo "watch mode already active"
+    echo "loop mode already active"
     exit 1
   fi
 
   if [[ -f "$STATE_FILE" || -f "$PID_FILE" ]]; then
-    echo "watch mode had stale state; replacing it"
+    echo "loop mode had stale state; replacing it"
     rm -f "$STATE_FILE" "$PID_FILE"
   fi
 
@@ -734,63 +761,73 @@ cmd_start() {
     exit 1
   fi
 
-  if [[ -z "$watcher_alias" ]]; then
-    watcher_alias="$(default_watcher_alias "$host_provider")"
+  if [[ -z "$reviewer_alias" ]]; then
+    reviewer_alias="$(default_reviewer_alias "$host_provider")"
   fi
 
-  local watcher_json
-  watcher_json="$(resolve_alias_json "$watcher_alias")"
+  local reviewer_json
+  reviewer_json="$(resolve_alias_json "$reviewer_alias")"
 
-  local interval="${WATCH_INTERVAL:-$DEFAULT_INTERVAL}"
-  if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -lt 1 ]]; then
-    echo "Error: WATCH_INTERVAL must be a positive integer number of seconds" >&2
+  local reviewer_bin
+  reviewer_bin="$(python3 - "$reviewer_json" <<'PY'
+import json
+import sys
+print(json.loads(sys.argv[1])["command"][0])
+PY
+)"
+  if ! command -v "$reviewer_bin" >/dev/null 2>&1; then
+    echo "Error: reviewer command '$reviewer_bin' not found on PATH. Install it or pick another reviewer with --reviewer." >&2
     exit 1
   fi
 
-  write_initial_state "$host_provider" "$watcher_alias" "$watcher_json" "$interval"
+  local interval="${LOOP_INTERVAL:-$DEFAULT_INTERVAL}"
+  if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -lt 1 ]]; then
+    echo "Error: LOOP_INTERVAL must be a positive integer number of seconds" >&2
+    exit 1
+  fi
+
+  local idle_timeout="${LOOP_IDLE_TIMEOUT:-$DEFAULT_IDLE_TIMEOUT}"
+  if ! [[ "$idle_timeout" =~ ^[0-9]+$ ]]; then
+    echo "Error: LOOP_IDLE_TIMEOUT must be a non-negative integer number of seconds (0 disables auto-stop)" >&2
+    exit 1
+  fi
+
+  write_initial_state "$host_provider" "$reviewer_alias" "$reviewer_json" "$interval" "$task" "$idle_timeout"
   if ! install_project_hooks "$host_provider"; then
     rm -f "$STATE_FILE" "$PID_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE"
     exit 1
   fi
-  nohup "$WATCH_SCRIPT" loop >/dev/null 2>&1 &
+  nohup "$LOOP_SCRIPT" run-loop >/dev/null 2>&1 &
   local pid="$!"
   printf '%s\n' "$pid" > "$PID_FILE"
   update_state_value "loop_pid" "$pid"
 
-  local watcher_provider
-  watcher_provider="$(json_value "watcher_provider")"
-  echo "Watch mode on. ${watcher_alias} (${watcher_provider:-unknown}) will review asynchronously every ${interval}s."
-  local watch_cmd
-  watch_cmd="$(watch_command_display)"
+  local reviewer_provider
+  reviewer_provider="$(json_value "reviewer_provider")"
+  echo "Loop mode on. ${reviewer_alias} (${reviewer_provider:-unknown}) will review asynchronously every ${interval}s."
+  if [[ "$idle_timeout" -gt 0 ]]; then
+    echo "Auto-stop: loop shuts itself down after $((idle_timeout / 60)) minutes without activity."
+  fi
+  echo "Task tracking: user prompts are journaled via hook and auto-distilled into the task statement."
+  local loop_cmd
+  loop_cmd="$(loop_command_display)"
   cat <<EOF
-Watch ledger contract:
-- Before marking a todo/task complete, run: $watch_cmd intent "what + why + expected validation"
-- Check feedback with: $watch_cmd check
-- If feedback exists, record a disposition before completing: $watch_cmd feedback accept|deny|park "reason"
-- Optional context: $watch_cmd progress "..." and $watch_cmd outcome "..."
-- Emergency bypass for one gate: WATCH_LEDGER_OFF=1
+Loop ledger contract:
+- Before marking a todo/task complete, run: $loop_cmd intent "what + why + expected validation"
+- Check feedback with: $loop_cmd check
+- If feedback exists, record a disposition before completing: $loop_cmd feedback accept|deny|park "reason"
+- Optional context: $loop_cmd progress "..." and $loop_cmd outcome "..."
+- Set/update the task statement for the reviewer: $loop_cmd task "..."
+- Emergency one-shot gate bypass: $loop_cmd bypass "reason"
+Note: hooks installed just now may need a session restart or /hooks review before the host agent enforces them.
 EOF
+  if [[ -z "$task" ]]; then
+    echo "Tip: no --task given. Run: $loop_cmd task \"<what the primary is building>\" so the reviewer knows the goal."
+  fi
 }
 
-cmd_stop() {
-  if [[ ! -d "$WATCH_DIR" ]]; then
-    echo "watch mode is not active"
-    return
-  fi
-
-  local pid=""
-  pid="$(state_loop_pid)"
-  local host_provider=""
-  if [[ -f "$STATE_FILE" ]]; then
-    host_provider="$(json_value "host_provider" 2>/dev/null || true)"
-  fi
-  if [[ -n "$pid" ]] && live_pid "$pid"; then
-    kill "$pid" 2>/dev/null || true
-  fi
-  if [[ -n "$host_provider" ]]; then
-    remove_project_hooks "$host_provider"
-  fi
-
+# Archives the active session files and prints the archive directory.
+archive_session() {
   local archive_name
   archive_name="$(python3 - "$STATE_FILE" <<'PY'
 import json
@@ -813,19 +850,43 @@ print(re.sub(r"[^0-9A-Za-z._-]+", "-", started_at).strip("-") or "session")
 PY
 )"
 
-  local archive_dir="$WATCH_DIR/archive/$archive_name"
+  local archive_dir="$LOOP_DIR/archive/$archive_name"
   mkdir -p "$archive_dir"
   [[ -f "$JOURNAL_FILE" ]] && cp "$JOURNAL_FILE" "$archive_dir/journal.md"
   [[ -f "$FEEDBACK_FILE" ]] && cp "$FEEDBACK_FILE" "$archive_dir/feedback.md"
   [[ -f "$STATE_FILE" ]] && cp "$STATE_FILE" "$archive_dir/state.json"
+  printf '%s' "$archive_dir"
+}
+
+cmd_stop() {
+  if [[ ! -d "$LOOP_DIR" ]]; then
+    echo "loop mode is not active"
+    return
+  fi
+
+  local pid=""
+  pid="$(state_loop_pid)"
+  local host_provider=""
+  if [[ -f "$STATE_FILE" ]]; then
+    host_provider="$(json_value "host_provider" 2>/dev/null || true)"
+  fi
+  if [[ -n "$pid" ]] && live_pid "$pid"; then
+    kill "$pid" 2>/dev/null || true
+  fi
+  if [[ -n "$host_provider" ]]; then
+    remove_project_hooks "$host_provider"
+  fi
+
+  local archive_dir
+  archive_dir="$(archive_session)"
 
   rm -f "$STATE_FILE" "$PID_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE"
-  echo "Watch mode off. Archived session to $archive_dir"
+  echo "Loop mode off. Archived session to $archive_dir"
 }
 
 cmd_status() {
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo "watch mode is not active"
+    echo "loop mode is not active"
     return
   fi
 
@@ -852,7 +913,7 @@ cmd_log() {
     exit 1
   fi
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo "watch mode is not active"
+    echo "loop mode is not active"
     return
   fi
   printf '[%s] %s\n' "$(date -Iseconds)" "$*" >> "$JOURNAL_FILE"
@@ -880,9 +941,33 @@ cmd_outcome() {
   cmd_tagged_log "outcome" "$@"
 }
 
+cmd_task() {
+  if [[ $# -eq 0 ]]; then
+    echo "Error: task requires a task statement" >&2
+    exit 1
+  fi
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "loop mode is not active"
+    return
+  fi
+  update_state_value "task" "$*"
+  cmd_log "task: $*"
+  echo "Task statement updated for the reviewer."
+}
+
+cmd_bypass() {
+  if [[ ! -f "$STATE_FILE" ]]; then
+    echo "loop mode is not active"
+    return
+  fi
+  update_state_value "ledger_bypass_once" 1
+  cmd_log "bypass: ${*:-one-shot ledger bypass requested}"
+  echo "Next ledger gate will pass once without intent/feedback checks."
+}
+
 cmd_feedback() {
   if [[ ! -f "$STATE_FILE" ]]; then
-    echo "watch mode is not active"
+    echo "loop mode is not active"
     return
   fi
 
@@ -901,9 +986,74 @@ cmd_feedback() {
       ;;
   esac
 
-  cmd_log "feedback-action: $action $*"
   touch "$FEEDBACK_FILE"
-  update_state_value "feedback_cursor" "$(file_size "$FEEDBACK_FILE")"
+  local size cursor seen loop_cmd
+  loop_cmd="$(loop_command_display)"
+  size="$(file_size "$FEEDBACK_FILE")"
+  cursor="$(state_int_value "feedback_cursor" 0)"
+  if [[ "$cursor" -gt "$size" ]]; then
+    cursor=0
+  fi
+  seen="$(state_int_value "feedback_seen_cursor" 0)"
+  if [[ "$seen" -gt "$size" ]]; then
+    seen="$size"
+  fi
+
+  if [[ "$size" -gt "$cursor" ]]; then
+    if [[ "$seen" -le "$cursor" ]]; then
+      echo "Error: unread feedback has not been viewed. Run $loop_cmd check first, then record a disposition." >&2
+      exit 1
+    fi
+    cmd_log "feedback-action: $action $*"
+    update_state_value "feedback_cursor" "$seen"
+    if [[ "$size" -gt "$seen" ]]; then
+      echo "Disposition recorded for the feedback you viewed. Newer feedback arrived since; run $loop_cmd check again."
+    fi
+  else
+    cmd_log "feedback-action: $action $*"
+  fi
+}
+
+# Prints unread feedback slice and whether any of it is actionable
+# (i.e. not solely $SYSTEM_TAG infrastructure notes).
+unread_feedback_analysis() {
+  python3 - "$STATE_FILE" "$FEEDBACK_FILE" "$SYSTEM_TAG" <<'PY'
+import json
+import os
+import sys
+
+state_path, feedback_path, system_tag = sys.argv[1:4]
+try:
+    with open(state_path, "r", encoding="utf-8") as f:
+        state = json.load(f)
+except Exception:
+    state = {}
+
+try:
+    cursor = int(state.get("feedback_cursor", 0))
+except (TypeError, ValueError):
+    cursor = 0
+
+size = os.path.getsize(feedback_path) if os.path.exists(feedback_path) else 0
+cursor = max(0, cursor)
+if cursor > size:
+    cursor = 0
+
+unread = ""
+if size > cursor:
+    with open(feedback_path, "rb") as f:
+        f.seek(cursor)
+        unread = f.read().decode("utf-8", errors="replace")
+
+actionable = any(
+    line.strip() and system_tag not in line
+    for line in unread.splitlines()
+)
+
+print("1" if size > cursor else "0")
+print("1" if actionable else "0")
+print(size)
+PY
 }
 
 cmd_check() {
@@ -927,14 +1077,14 @@ cmd_check() {
 
   if [[ ! -f "$STATE_FILE" ]]; then
     if [[ "$strict" == false ]]; then
-      echo "watch mode is not active"
+      echo "loop mode is not active"
     fi
     return 0
   fi
 
   touch "$FEEDBACK_FILE"
-  local cursor size blocked=false unread="" watch_cmd
-  watch_cmd="$(watch_command_display)"
+  local cursor size blocked=false unread="" loop_cmd
+  loop_cmd="$(loop_command_display)"
   cursor="$(state_int_value "feedback_cursor" 0)"
   if ! [[ "$cursor" =~ ^[0-9]+$ ]]; then
     cursor=0
@@ -946,20 +1096,23 @@ cmd_check() {
 
   if [[ "$size" -gt "$cursor" ]]; then
     unread="$(tail -c +"$((cursor + 1))" "$FEEDBACK_FILE")"
+    # Record how far the reader has actually seen; feedback dispositions ack
+    # only up to this point so notes appended later are never silently acked.
+    update_state_value "feedback_seen_cursor" "$size"
     if [[ "$strict" == true ]]; then
       {
-        echo "Unread watcher feedback requires attention before continuing:"
+        echo "Unread reviewer feedback requires attention before continuing:"
         printf '%s\n' "$unread"
-        echo "Record a disposition with: $watch_cmd feedback accept|deny|park \"reason\""
+        echo "Record a disposition with: $loop_cmd feedback accept|deny|park \"reason\""
       } >&2
       blocked=true
     else
       printf '%s\n' "$unread"
-      echo "Feedback remains unread until you run: $watch_cmd feedback accept|deny|park \"reason\""
+      echo "Feedback remains unread until you run: $loop_cmd feedback accept|deny|park \"reason\""
     fi
   else
     if [[ "$strict" == false ]]; then
-      echo "No unread watcher feedback."
+      echo "No unread reviewer feedback."
     fi
   fi
 
@@ -967,7 +1120,7 @@ cmd_check() {
     local pid
     pid="$(state_loop_pid)"
     if [[ -z "$pid" ]] || ! live_pid "$pid"; then
-      echo "watcher loop is not running; run $watch_cmd status or $watch_cmd stop" >&2
+      echo "reviewer loop is not running; run $loop_cmd status or $loop_cmd stop" >&2
       blocked=true
     fi
     if [[ "$blocked" == true ]]; then
@@ -981,22 +1134,29 @@ cmd_gate() {
     return 0
   fi
 
-  if [[ "${WATCH_LEDGER_OFF:-}" == "1" ]]; then
-    cmd_log "outcome: ledger-gate bypassed (WATCH_LEDGER_OFF)"
-    echo "watch ledger gate bypassed by WATCH_LEDGER_OFF=1" >&2
+  if [[ "${LOOP_LEDGER_OFF:-}" == "1" ]]; then
+    cmd_log "outcome: ledger-gate bypassed (LOOP_LEDGER_OFF)"
+    echo "loop ledger gate bypassed by LOOP_LEDGER_OFF=1" >&2
+    return 0
+  fi
+
+  if [[ "$(state_int_value "ledger_bypass_once" 0)" == "1" ]]; then
+    update_state_value "ledger_bypass_once" 0
+    cmd_log "outcome: ledger-gate bypassed (one-shot bypass)"
+    echo "loop ledger gate bypassed once" >&2
     return 0
   fi
 
   touch "$JOURNAL_FILE" "$FEEDBACK_FILE"
 
-  local analysis watch_cmd
-  watch_cmd="$(watch_command_display)"
-  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" 2>/dev/null <<'PY'
+  local analysis loop_cmd
+  loop_cmd="$(loop_command_display)"
+  if ! analysis="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE" "$SYSTEM_TAG" 2>/dev/null <<'PY'
 import json
 import os
 import sys
 
-state_path, journal_path, feedback_path = sys.argv[1:4]
+state_path, journal_path, feedback_path, system_tag = sys.argv[1:5]
 with open(state_path, "r", encoding="utf-8") as f:
     state = json.load(f)
 
@@ -1005,6 +1165,9 @@ def int_value(key):
         return int(state.get(key, 0))
     except (TypeError, ValueError):
         return 0
+
+task = state.get("task", "")
+has_task = isinstance(task, str) and bool(task.strip())
 
 ledger_cursor = max(0, int_value("ledger_completion_cursor"))
 feedback_cursor = max(0, int_value("feedback_cursor"))
@@ -1022,31 +1185,51 @@ with open(journal_path, "rb") as f:
     journal_delta = f.read().decode("utf-8", errors="replace")
 
 has_intent = any("] intent: " in line for line in journal_delta.splitlines())
-has_unread_feedback = feedback_size > feedback_cursor
 
+unread = ""
+if feedback_size > feedback_cursor:
+    with open(feedback_path, "rb") as f:
+        f.seek(feedback_cursor)
+        unread = f.read().decode("utf-8", errors="replace")
+
+# Infrastructure notes (reviewer CLI failures etc.) are visible via `check`
+# but must not block task completion for the primary.
+has_actionable_feedback = any(
+    line.strip() and system_tag not in line
+    for line in unread.splitlines()
+)
+
+print("1" if has_task else "0")
 print("1" if has_intent else "0")
-print("1" if has_unread_feedback else "0")
+print("1" if has_actionable_feedback else "0")
 print(journal_size)
 PY
   )"; then
-    echo "watch ledger gate could not read state; allowing completion" >&2
+    echo "loop ledger gate could not read state; allowing completion" >&2
     return 0
   fi
 
-  local has_intent has_unread_feedback journal_size blocked=false
-  has_intent="$(printf '%s\n' "$analysis" | sed -n '1p')"
-  has_unread_feedback="$(printf '%s\n' "$analysis" | sed -n '2p')"
-  journal_size="$(printf '%s\n' "$analysis" | sed -n '3p')"
+  local has_task has_intent has_unread_feedback journal_size blocked=false
+  has_task="$(printf '%s\n' "$analysis" | sed -n '1p')"
+  has_intent="$(printf '%s\n' "$analysis" | sed -n '2p')"
+  has_unread_feedback="$(printf '%s\n' "$analysis" | sed -n '3p')"
+  journal_size="$(printf '%s\n' "$analysis" | sed -n '4p')"
+
+  if [[ "$has_task" != "1" ]]; then
+    echo "Loop ledger requires a task statement before task completion." >&2
+    echo "Run: $loop_cmd task \"<what the primary is building>\"" >&2
+    blocked=true
+  fi
 
   if [[ "$has_intent" != "1" ]]; then
-    echo "Watch ledger requires intent before task completion." >&2
-    echo "Run: $watch_cmd intent \"what + why + expected validation\"" >&2
+    echo "Loop ledger requires intent before task completion." >&2
+    echo "Run: $loop_cmd intent \"what + why + expected validation\"" >&2
     blocked=true
   fi
 
   if [[ "$has_unread_feedback" == "1" ]]; then
-    echo "Unread watcher feedback requires disposition before task completion." >&2
-    echo "Run: $watch_cmd feedback accept|deny|park \"reason\"" >&2
+    echo "Unread reviewer feedback requires disposition before task completion." >&2
+    echo "Run: $loop_cmd check then $loop_cmd feedback accept|deny|park \"reason\"" >&2
     blocked=true
   fi
 
@@ -1063,39 +1246,49 @@ cmd_hook_stop() {
   fi
 
   touch "$FEEDBACK_FILE"
-  local cursor size
-  cursor="$(state_int_value "feedback_cursor" 0)"
-  size="$(file_size "$FEEDBACK_FILE")"
-  if [[ "$cursor" -gt "$size" ]]; then
-    cursor=0
+  local analysis has_unread has_actionable
+  analysis="$(unread_feedback_analysis 2>/dev/null || printf '0\n0\n0\n')"
+  has_unread="$(printf '%s\n' "$analysis" | sed -n '1p')"
+  has_actionable="$(printf '%s\n' "$analysis" | sed -n '2p')"
+
+  if [[ "$has_actionable" == "1" ]]; then
+    local loop_cmd
+    loop_cmd="$(loop_command_display)"
+    if [[ "${LOOP_STOP_ACTIVE:-0}" == "1" ]]; then
+      echo "Unread reviewer feedback is still pending; run $loop_cmd check" >&2
+      return 0
+    fi
+    echo "Unread reviewer feedback is available. Run $loop_cmd check, then record a disposition with $loop_cmd feedback accept|deny|park \"reason\" before finishing." >&2
+    exit 2
   fi
-  if [[ "$size" -gt "$cursor" ]]; then
-    local watch_cmd
-    watch_cmd="$(watch_command_display)"
-    echo "Unread watcher feedback is available; run $watch_cmd check" >&2
+
+  if [[ "$has_unread" == "1" ]]; then
+    local loop_cmd
+    loop_cmd="$(loop_command_display)"
+    echo "Reviewer infrastructure notes are pending; run $loop_cmd check when convenient" >&2
   fi
   return 0
 }
 
-invoke_watcher() {
-  local watcher_json="$1"
+invoke_reviewer() {
+  local reviewer_json="$1"
   local prompt_file="$2"
 
-  python3 - "$watcher_json" "$prompt_file" <<'PY'
+  python3 - "$reviewer_json" "$prompt_file" <<'PY'
 import json
 import os
 import subprocess
 import sys
 
-watcher = json.loads(sys.argv[1])
+reviewer = json.loads(sys.argv[1])
 prompt_file = sys.argv[2]
 
-command = watcher.get("command", [])
-transport = watcher.get("prompt_transport", "arg")
-provider = str(watcher.get("provider", "")).strip().lower()
+command = reviewer.get("command", [])
+transport = reviewer.get("prompt_transport", "arg")
+provider = str(reviewer.get("provider", "")).strip().lower()
 
 if not isinstance(command, list) or not command:
-    print("Error: invalid watcher command", file=sys.stderr)
+    print("Error: invalid reviewer command", file=sys.stderr)
     raise SystemExit(1)
 
 if not provider and isinstance(command[0], str):
@@ -1134,42 +1327,164 @@ PY
 
 append_system_feedback() {
   local message="$1"
-  printf '\n[%s] [watch-system] %s\n' "$(date -Iseconds)" "$message" >> "$FEEDBACK_FILE"
+  printf '\n[%s] %s %s\n' "$(date -Iseconds)" "$SYSTEM_TAG" "$message" >> "$FEEDBACK_FILE"
 }
 
-cmd_loop() {
+record_loop_failure() {
+  local message="$1"
+  local last failures
+  last="$(json_value "last_failure_message" 2>/dev/null || true)"
+  failures="$(state_int_value "consecutive_failures" 0)"
+  if [[ -n "$last" && "$message" == "$last" ]]; then
+    update_state_value "consecutive_failures" "$((failures + 1))"
+  else
+    append_system_feedback "$message"
+    update_state_value "last_failure_message" "$message"
+    update_state_value "consecutive_failures" 1
+  fi
+}
+
+clear_loop_failure() {
+  local failures
+  failures="$(state_int_value "consecutive_failures" 0)"
+  if [[ "$failures" -gt 0 ]]; then
+    update_state_value "consecutive_failures" 0
+    update_state_value "last_failure_message" ""
+  fi
+}
+
+# Rewrites the task statement from new "user:" journal entries (captured by
+# the UserPromptSubmit hook) so the reviewer always judges against current
+# intent, even when the primary agent forgets to run `task`.
+run_task_distiller() {
+  local reviewer_json="$1"
+  local distill_offset journal_size user_lines current_task prompt_file output normalized
+
+  distill_offset="$(state_int_value "user_distill_offset" 0)"
+  journal_size="$(file_size "$JOURNAL_FILE")"
+  if [[ "$distill_offset" -gt "$journal_size" ]]; then
+    distill_offset=0
+  fi
+  [[ "$journal_size" -gt "$distill_offset" ]] || return 0
+
+  user_lines="$(tail -c +"$((distill_offset + 1))" "$JOURNAL_FILE" | grep "] user: " || true)"
+  if [[ -z "$user_lines" ]]; then
+    update_state_value "user_distill_offset" "$journal_size"
+    return 0
+  fi
+
+  current_task="$(json_value "task" 2>/dev/null || true)"
+  prompt_file="$(mktemp)"
+  cat > "$prompt_file" <<EOF
+You are the task distiller for a coding session (loop mode).
+Rewrite the task statement as 1-3 sentences of current truth for a code
+reviewer. Preserve standing constraints unless the user explicitly changed
+them. Base the rewrite on the current statement plus the new user messages.
+
+Current task statement:
+${current_task:-(none yet)}
+
+New user messages (most recent last):
+$user_lines
+
+Output ONLY the rewritten task statement, no preamble.
+If the new messages do not change the task, output exactly: NO_CHANGE
+EOF
+
+  if ! output="$(invoke_reviewer "$reviewer_json" "$prompt_file" 2>&1)"; then
+    rm -f "$prompt_file"
+    return 0
+  fi
+  rm -f "$prompt_file"
+
+  update_state_value "user_distill_offset" "$journal_size"
+
+  output="$(printf '%s' "$output" | sed '/^[[:space:]]*$/d' | head -c 1000)"
+  normalized="$(printf '%s\n' "$output" | tail -n 1 | sed 's/[^A-Za-z_]//g' | tr '[:lower:]' '[:upper:]')"
+  if [[ -z "$output" || "$normalized" == "NO_CHANGE" || "$normalized" == "NOCHANGE" ]]; then
+    return 0
+  fi
+
+  output="$(printf '%s' "$output" | tr '\n' ' ')"
+  update_state_value "task" "$output"
+  cmd_log "task(auto): $output"
+}
+
+cmd_run_loop() {
   while [[ -f "$PID_FILE" ]]; do
-    local interval
+    local interval failures
     interval="$DEFAULT_INTERVAL"
     if [[ -f "$STATE_FILE" ]]; then
-      interval="$(json_value "watch_interval" 2>/dev/null || printf '%s' "$DEFAULT_INTERVAL")"
+      interval="$(json_value "loop_interval" 2>/dev/null || printf '%s' "$DEFAULT_INTERVAL")"
     fi
     if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -lt 1 ]]; then
       interval="$DEFAULT_INTERVAL"
     fi
 
-    sleep "$interval"
+    # Back off while the reviewer command keeps failing.
+    failures="$(state_int_value "consecutive_failures" 0)"
+    if [[ "$failures" -gt 5 ]]; then
+      failures=5
+    fi
+    sleep "$((interval * (1 + failures)))"
     [[ -f "$PID_FILE" && -f "$STATE_FILE" ]] || break
 
-    local watcher_alias host_provider watcher_provider watcher_json journal_tail journal_slice_file journal_new_offset
-    local diff_stat git_status feedback_status feedback_cursor feedback_size prompt_file output output_last_line
-    local watch_cmd
-    watch_cmd="$(watch_command_display)"
-    watcher_alias="$(json_value "watcher_alias")"
+    # Idle auto-stop: forgotten sessions shut themselves down. Activity means
+    # journal writes (intent/log/task/dispositions) or repo changes.
+    local idle_timeout last_change journal_mtime idle_basis now
+    idle_timeout="$(state_int_value "idle_timeout" "$DEFAULT_IDLE_TIMEOUT")"
+    if [[ "$idle_timeout" -gt 0 ]]; then
+      last_change="$(state_int_value "last_change_at" 0)"
+      journal_mtime="$(python3 - "$JOURNAL_FILE" <<'PY'
+import os
+import sys
+
+path = sys.argv[1]
+print(int(os.path.getmtime(path)) if os.path.exists(path) else 0)
+PY
+)"
+      idle_basis="$last_change"
+      if [[ "$journal_mtime" -gt "$idle_basis" ]]; then
+        idle_basis="$journal_mtime"
+      fi
+      now="$(date +%s)"
+      if [[ "$idle_basis" -gt 0 && $((now - idle_basis)) -gt "$idle_timeout" ]]; then
+        local stop_host
+        stop_host="$(json_value "host_provider" 2>/dev/null || true)"
+        if [[ -n "$stop_host" ]]; then
+          remove_project_hooks "$stop_host"
+        fi
+        archive_session >/dev/null
+        rm -f "$STATE_FILE" "$PID_FILE" "$JOURNAL_FILE" "$FEEDBACK_FILE"
+        exit 0
+      fi
+    fi
+
+    local reviewer_alias host_provider reviewer_provider reviewer_json task
+    local journal_tail journal_slice_file journal_new_offset
+    local diff_stat diff_body git_status feedback_status feedback_cursor feedback_size
+    local recent_feedback signature last_signature prompt_file output output_last_line normalized_line
+    local loop_cmd
+    loop_cmd="$(loop_command_display)"
+    reviewer_alias="$(json_value "reviewer_alias")"
     host_provider="$(json_value "host_provider")"
 
-    if ! watcher_json="$(resolve_alias_json "$watcher_alias" 2>&1)"; then
-      append_system_feedback "watcher command failed: $watcher_json"
+    if ! reviewer_json="$(resolve_alias_json "$reviewer_alias" 2>&1)"; then
+      record_loop_failure "reviewer command failed: $reviewer_json"
       continue
     fi
 
-    watcher_provider="$(python3 - "$watcher_json" <<'PY'
+    reviewer_provider="$(python3 - "$reviewer_json" <<'PY'
 import json
 import sys
-watcher = json.loads(sys.argv[1])
-print(watcher.get("provider", ""))
+reviewer = json.loads(sys.argv[1])
+print(reviewer.get("provider", ""))
 PY
 )"
+
+    # Fold new user utterances into the task statement before reviewing.
+    run_task_distiller "$reviewer_json"
+    task="$(json_value "task" 2>/dev/null || true)"
 
     journal_slice_file="$(mktemp)"
     if ! journal_new_offset="$(python3 - "$STATE_FILE" "$JOURNAL_FILE" "$journal_slice_file" 2>/dev/null <<'PY'
@@ -1206,53 +1521,97 @@ PY
     journal_tail="$(cat "$journal_slice_file")"
     rm -f "$journal_slice_file"
 
-    diff_stat="$(git diff --stat 2>/dev/null || true)"
     git_status="$(git status --short 2>/dev/null || true)"
+    # `git diff HEAD` covers staged + unstaged; plain `git diff` misses work the
+    # primary has already staged. Fall back for repos without a commit yet.
+    diff_stat="$(git diff HEAD --stat 2>/dev/null || git diff --stat 2>/dev/null || true)"
+    diff_body="$(git diff HEAD 2>/dev/null | head -c "$DIFF_BYTE_CAP" || true)"
+    if [[ -z "$diff_body" ]]; then
+      diff_body="$(git diff 2>/dev/null | head -c "$DIFF_BYTE_CAP" || true)"
+    fi
+    if [[ "$(printf '%s' "$diff_body" | wc -c | tr -d '[:space:]')" -ge "$DIFF_BYTE_CAP" ]]; then
+      diff_body="$diff_body
+[diff truncated at $DIFF_BYTE_CAP bytes — read the files directly for the rest]"
+    fi
+
+    # Skip the model call entirely when nothing changed since the last pass.
+    signature="$(printf '%s\n---\n%s\n---\n%s\n---\n%s' "$journal_tail" "$git_status" "$diff_stat" "$diff_body" | shasum -a 256 | cut -d' ' -f1)"
+    last_signature="$(json_value "last_review_signature" 2>/dev/null || true)"
+    if [[ -n "$signature" && "$signature" == "$last_signature" ]]; then
+      continue
+    fi
+    update_state_value "last_change_at" "$(date +%s)"
+
     feedback_size="$(file_size "$FEEDBACK_FILE")"
     feedback_cursor="$(state_int_value "feedback_cursor" 0)"
     if [[ "$feedback_cursor" -gt "$feedback_size" ]]; then
       feedback_cursor=0
     fi
     if [[ "$feedback_size" -gt "$feedback_cursor" ]]; then
-      feedback_status="unread feedback pending; primary must run $watch_cmd feedback accept|deny|park"
+      feedback_status="unread feedback pending; primary must run $loop_cmd feedback accept|deny|park"
     else
       feedback_status="clear"
     fi
+
+    recent_feedback="$(tail -n 30 "$FEEDBACK_FILE" 2>/dev/null || true)"
+    if [[ -z "$recent_feedback" ]]; then
+      recent_feedback="(none yet)"
+    fi
+
     prompt_file="$(mktemp)"
     cat > "$prompt_file" <<EOF
-You are watching a coding session asynchronously.
-Primary provider: $host_provider
-Watcher provider: $watcher_provider
+You are the asynchronous reviewer for an active coding session (loop mode).
+Primary agent provider: $host_provider
+You (reviewer) provider: $reviewer_provider
 
-New primary journal since last watcher pass:
+You are running inside the project working directory. You may read files, run
+git commands, and inspect code to verify a concern before reporting it.
+
+Task statement from the primary session:
+${task:-(none provided — judge against the journal and the changes themselves)}
+
+New primary journal entries since your last pass:
 $journal_tail
 
 Current git status --short:
 $git_status
 
-Current git diff stat:
+Current git diff HEAD --stat:
 $diff_stat
+
+Changed content (git diff HEAD, capped):
+$diff_body
+
+Feedback you have already delivered (do NOT repeat these points):
+$recent_feedback
 
 Unread feedback disposition status:
 $feedback_status
 
-Write at most one concise note if there is a concrete risk, missed requirement, or likely bug.
-If there is no actionable feedback, output a single line: NO_FEEDBACK.
+Review the implementation for a concrete risk, missed requirement,
+over/under-engineering, or likely bug. Judge quality and practicality, not
+style. Write at most ONE concise note (max 5 lines) with file:line evidence.
+Only report something worth interrupting the primary for.
+If there is nothing actionable, output exactly: NO_FEEDBACK
 EOF
 
-    if ! output="$(invoke_watcher "$watcher_json" "$prompt_file" 2>&1)"; then
+    if ! output="$(invoke_reviewer "$reviewer_json" "$prompt_file" 2>&1)"; then
       rm -f "$prompt_file"
-      append_system_feedback "watcher command failed: ${output%%$'\n'*}"
+      record_loop_failure "reviewer command failed: ${output%%$'\n'*}"
       continue
     fi
     rm -f "$prompt_file"
 
+    clear_loop_failure
     update_state_value "journal_review_offset" "$journal_new_offset"
+    update_state_value "last_review_signature" "$signature"
 
     output="$(printf '%s' "$output" | sed '/^[[:space:]]*$/d')"
-    output_last_line="$(printf '%s\n' "$output" | tail -n 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    if [[ -n "$output" && "$output_last_line" != "NO_FEEDBACK" ]]; then
-      printf '\n[%s] [%s] %s\n' "$(date -Iseconds)" "${watcher_provider:-watcher}" "$output" >> "$FEEDBACK_FILE"
+    output_last_line="$(printf '%s\n' "$output" | tail -n 1)"
+    # Tolerate wrappers like "`NO_FEEDBACK`", "**NO_FEEDBACK**", "no_feedback."
+    normalized_line="$(printf '%s\n' "$output_last_line" | sed 's/[^A-Za-z_]//g' | tr '[:lower:]' '[:upper:]')"
+    if [[ -n "$output" && "$normalized_line" != "NO_FEEDBACK" ]]; then
+      printf '\n[%s] [%s] %s\n' "$(date -Iseconds)" "${reviewer_provider:-reviewer}" "$output" >> "$FEEDBACK_FILE"
     fi
   done
 }
@@ -1268,15 +1627,17 @@ case "$command" in
   start) cmd_start "$@" ;;
   stop) cmd_stop "$@" ;;
   status) cmd_status "$@" ;;
+  task) cmd_task "$@" ;;
   log) cmd_log "$@" ;;
   intent) cmd_intent "$@" ;;
   progress) cmd_progress "$@" ;;
   outcome) cmd_outcome "$@" ;;
   feedback) cmd_feedback "$@" ;;
   check) cmd_check "$@" ;;
+  bypass) cmd_bypass "$@" ;;
   gate) cmd_gate "$@" ;;
   hook-stop) cmd_hook_stop "$@" ;;
-  loop) cmd_loop "$@" ;;
+  run-loop) cmd_run_loop "$@" ;;
   -h|--help) usage ;;
   *)
     echo "Unknown command: $command" >&2
