@@ -4,7 +4,7 @@ Loop mode lets one model work as the primary agent while another model reviews p
 
 New here? Read [How Loop Mode Works](how-loop-mode-works.md) first — this page is the full reference.
 
-It works in both directions: when Claude Code is the primary, Codex reviews by default; when Codex is the primary, Claude (Opus) reviews by default. Override with `--reviewer <alias>`.
+It works in both directions: when Claude Code is the primary, Codex reviews by default; when Codex is the primary, Claude (Opus) reviews by default. Override with `--reviewer <alias>` — aliases: opus, sonnet, codex, gemini (copilot is debate-only: its CLI emits JSON that loop mode does not parse).
 
 ## Start and Stop
 

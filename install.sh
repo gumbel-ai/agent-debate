@@ -117,8 +117,9 @@ When user says **"implement debate N"**, **"apply plan for debate N"**, or **"im
 
 When user says **"loop mode on"** or **"start loop mode"**:
 1. Run `./loop.sh start --task "<one-line task statement>"` if `./loop.sh` exists, else `~/.agent-debate/loop.sh start --task "..."`. Always pass `--task` so the reviewer knows the goal.
-2. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
-3. If hooks were just installed, they may need a session restart or `/hooks` review before they enforce.
+2. If the user names a reviewer model, add `--reviewer <alias>` (aliases: opus, sonnet, codex, gemini — not copilot). Default when unspecified: Codex reviews Claude; Opus reviews Codex.
+3. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
+4. If hooks were just installed, they may need a session restart or `/hooks` review before they enforce.
 
 When user says **"loop mode off"**, **"stop loop mode"**, **"switch off loop mode"**, or **"shut down loop mode"**:
 1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`
@@ -196,8 +197,9 @@ When user says "continue debate N" or "respond to debate N":
 
 When user says "loop mode on" or "start loop mode":
 1. Run `./loop.sh start --task "<one-line task statement>"` if `./loop.sh` exists, else `~/.agent-debate/loop.sh start --task "..."`. Always pass `--task` so the reviewer knows the goal.
-2. If Codex asks to review/trust the project hooks, use `/hooks` to trust the loop-mode hooks.
-3. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
+2. If the user names a reviewer model, add `--reviewer <alias>` (aliases: opus, sonnet, codex, gemini — not copilot). Default when unspecified: Opus reviews Codex; Codex reviews Claude.
+3. If Codex asks to review/trust the project hooks, use `/hooks` to trust the loop-mode hooks.
+4. Tell the user: "Loop mode on. <reviewer> will review asynchronously every 60s."
 
 When user says "loop mode off", "stop loop mode", "switch off loop mode", or "shut down loop mode":
 1. Run `./loop.sh stop` if `./loop.sh` exists, else `~/.agent-debate/loop.sh stop`.
