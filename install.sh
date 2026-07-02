@@ -393,14 +393,14 @@ install_agent() {
   # Append or replace instructions in config file
   if [[ -f "$config_path" ]]; then
     if grep -q "$SENTINEL_START" "$config_path" 2>/dev/null; then
-      # Upgrade: strip old block, then append new
+      # Upgrade: strip old block (and trailing blank lines), then append new
       local tmp
       tmp=$(mktemp)
       awk -v start="$SENTINEL_START" -v end="$SENTINEL_END" '
         $0 == start { skip=1; next }
         $0 == end { skip=0; next }
         !skip { print }
-      ' "$config_path" > "$tmp"
+      ' "$config_path" | awk 'NF { for (i = 0; i < blank; i++) print ""; blank = 0; print; next } { blank++ }' > "$tmp"
       mv "$tmp" "$config_path"
       printf "\n%s\n" "$instructions" >> "$config_path"
       echo "  $config_path (updated)"
@@ -437,7 +437,7 @@ uninstall_agent() {
       $0 == start { skip=1; next }
       $0 == end { skip=0; next }
       !skip { print }
-    ' "$config_path" > "$tmp"
+    ' "$config_path" | awk 'NF { for (i = 0; i < blank; i++) print ""; blank = 0; print; next } { blank++ }' > "$tmp"
     mv "$tmp" "$config_path"
     echo "  $config_path (block removed)"
     changed=true
@@ -464,6 +464,7 @@ install_shared_config() {
   get_file "TEMPLATE.md" "$shared_dir/TEMPLATE.md"
   get_file "orchestrate.sh" "$shared_dir/orchestrate.sh"
   get_file "agent_response_parser.py" "$shared_dir/agent_response_parser.py"
+  get_file "debate_lib.py" "$shared_dir/debate_lib.py"
   get_file "loop.sh" "$shared_dir/loop.sh"
   get_file "hooks/loop-stop.sh" "$shared_dir/hooks/loop-stop.sh"
   get_file "hooks/loop-git-check.sh" "$shared_dir/hooks/loop-git-check.sh"
@@ -481,6 +482,7 @@ install_shared_config() {
   echo "  $shared_dir/TEMPLATE.md (auto mode template)"
   echo "  $shared_dir/orchestrate.sh (auto mode)"
   echo "  $shared_dir/agent_response_parser.py (agent output parser)"
+  echo "  $shared_dir/debate_lib.py (debate-file helpers)"
   echo "  $shared_dir/loop.sh (loop mode)"
   echo "  $shared_dir/hooks/ (loop mode hooks)"
 }

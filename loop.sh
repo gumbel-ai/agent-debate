@@ -1311,10 +1311,24 @@ elif provider == "gemini":
     env.pop("GEMINI_SESSION_ID", None)
     env.pop("GEMINI_CLI_SESSION", None)
 
-if transport == "stdin":
-    result = subprocess.run(command, input=prompt, capture_output=True, text=True, env=env)
-else:
-    result = subprocess.run(command + [prompt], capture_output=True, text=True, env=env)
+# stdin must be closed for arg transport: some CLIs (codex exec) block forever
+# waiting on a piped-but-silent stdin. The timeout bounds a hung reviewer pass
+# so the loop keeps ticking and idle auto-stop stays reachable.
+timeout_seconds = int(os.environ.get("LOOP_REVIEWER_TIMEOUT", "600"))
+try:
+    if transport == "stdin":
+        result = subprocess.run(
+            command, input=prompt, capture_output=True, text=True, env=env,
+            timeout=timeout_seconds,
+        )
+    else:
+        result = subprocess.run(
+            command + [prompt], capture_output=True, text=True, env=env,
+            stdin=subprocess.DEVNULL, timeout=timeout_seconds,
+        )
+except subprocess.TimeoutExpired:
+    print(f"reviewer command timed out after {timeout_seconds}s", file=sys.stderr)
+    raise SystemExit(124)
 
 if result.returncode != 0:
     if result.stderr:

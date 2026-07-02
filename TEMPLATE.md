@@ -28,7 +28,7 @@
 
 {Agent 1 lists assumptions before proposing. Each assumption must be explicit and falsifiable.
  Responding agents must verify or challenge each assumption before engaging the proposal.
- Format: `- [A1-R1] Assumption: X. Basis: Y.`
+ Format: `- [A#-R#] Assumption: X. Basis: Y.` (your agent number and round)
  To challenge: strikethrough + counter with evidence, same as proposal edits.}
 
 ---
@@ -84,7 +84,7 @@ PLAN_STATUS: PENDING
 ## Parking Lot
 
 {Related issues noticed during debate that are out of scope.
- Any agent can add items here. Format: `- [A1-R2] <issue description>`}
+ Any agent can add items here. Format: `- [A#-R#] <issue description>`}
 
 ---
 

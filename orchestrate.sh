@@ -562,7 +562,7 @@ escape_for_sed() {
 }
 
 has_open_disputes() {
-  grep -Eq '^\|.*\|[[:space:]]*OPEN[[:space:]]*\|[[:space:]]*$' "$DEBATE_FILE"
+  python3 "$SCRIPT_DIR/debate_lib.py" open-disputes "$DEBATE_FILE"
 }
 
 tag_for_turn() {
@@ -613,47 +613,14 @@ all_agents_contributed_in_round() {
 
 is_converged() {
   local round="$1"
-  grep -q "STATUS: CONVERGED" "$DEBATE_FILE" \
+  python3 "$SCRIPT_DIR/debate_lib.py" proposal-converged "$DEBATE_FILE" \
     && ! has_open_disputes \
     && all_agents_contributed_in_round "$round"
 }
 
 is_plan_converged() {
-  if python3 - "$DEBATE_FILE" <<'PY'
-import re
-import sys
-
-path = sys.argv[1]
-with open(path, "r", encoding="utf-8") as f:
-    text = f.read()
-
-m = re.search(r"^## Plan\s*$", text, re.MULTILINE)
-if not m:
-    raise SystemExit(1)
-
-section = text[m.end():]
-m_next = re.search(r"^##\s+", section, re.MULTILINE)
-if m_next:
-    section = section[:m_next.start()]
-
-for line in section.splitlines():
-    line = line.strip()
-    if not line:
-        continue
-    m_status = re.match(r"^PLAN_STATUS:\s*([A-Z_]+)\s*$", line)
-    if m_status:
-        raise SystemExit(0 if m_status.group(1) == "CONVERGED" else 1)
-
-raise SystemExit(1)
-PY
-  then
-    if has_open_disputes; then
-      return 1
-    fi
-    return 0
-  else
-    return 1
-  fi
+  python3 "$SCRIPT_DIR/debate_lib.py" plan-converged "$DEBATE_FILE" \
+    && ! has_open_disputes
 }
 
 state_init() {
@@ -1001,51 +968,35 @@ else
   DEBATE_FILE="$DEBATES_DIR/${NEXT_NUM}-$(date +%Y-%m-%d)-${SLUG}.md"
   CURRENT_ROUND=1
 
-  # Build file context section
-  FILE_CONTEXT=""
+  # Build newline-separated file list, warning on missing paths
+  FILES_LINES=""
   if [[ -n "$FILES" ]]; then
     for f in $FILES; do
       if [[ -f "$f" ]]; then
-        FILE_CONTEXT="$FILE_CONTEXT\n- \`$f\`"
+        FILES_LINES="${FILES_LINES}${f}
+"
       else
         echo "Warning: file not found, skipping: $f"
       fi
     done
   fi
-  [[ -z "$FILE_CONTEXT" ]] && FILE_CONTEXT="None specified — agents should explore as needed."
 
-  CONSTRAINT_TEXT="${CONSTRAINTS:-None specified.}"
-
-  # Create debate file from template
-  sed \
-    -e "s|{TOPIC}|$TOPIC|g" \
-    -e "s|{DATE}|$(date +%Y-%m-%d)|g" \
-    -e "s|{AGENT_1_NAME}|$AGENT_1|g" \
-    -e "s|{AGENT_2_NAME}|$AGENT_2|g" \
-    -e "s|{MAX_ROUNDS}|$MAX_ROUNDS|g" \
-    -e "s|{PROBLEM_DESCRIPTION}|$TOPIC|g" \
-    -e "s|{FILE_LIST_WITH_KEY_SECTIONS}|$FILE_CONTEXT|g" \
-    -e "s|{ANY_CONSTRAINTS_OR_NON_NEGOTIABLES}|$CONSTRAINT_TEXT|g" \
-    "$TEMPLATE" > "$DEBATE_FILE"
-
-  # Handle Agent 3/4 placeholders: substitute when present, remove when not.
-  tmp_debate=""
-  tmp_debate=$(mktemp)
-  cp "$DEBATE_FILE" "$tmp_debate"
-
-  if [[ "$AGENT_COUNT" -ge 3 ]]; then
-    sed -i.bak "s|{AGENT_3_NAME}|${AGENT_NAMES[2]}|g" "$tmp_debate" && rm -f "${tmp_debate}.bak"
-  else
-    sed -i.bak '/{AGENT_3_NAME}/d' "$tmp_debate" && rm -f "${tmp_debate}.bak"
+  # Render from template in python: values are substituted verbatim, so
+  # topics/constraints containing sed metacharacters cannot corrupt the file.
+  if ! DL_TOPIC="$TOPIC" \
+    DL_DATE="$(date +%Y-%m-%d)" \
+    DL_MAX_ROUNDS="$MAX_ROUNDS" \
+    DL_CONSTRAINTS="$CONSTRAINTS" \
+    DL_AGENT_COUNT="$AGENT_COUNT" \
+    DL_AGENT1="${AGENT_NAMES[0]}" \
+    DL_AGENT2="${AGENT_NAMES[1]}" \
+    DL_AGENT3="${AGENT_NAMES[2]:-}" \
+    DL_AGENT4="${AGENT_NAMES[3]:-}" \
+    DL_FILES="$FILES_LINES" \
+    python3 "$SCRIPT_DIR/debate_lib.py" render "$TEMPLATE" "$DEBATE_FILE"; then
+    echo "Error: failed to render debate file from template"
+    exit 1
   fi
-
-  if [[ "$AGENT_COUNT" -ge 4 ]]; then
-    sed -i.bak "s|{AGENT_4_NAME}|${AGENT_NAMES[3]}|g" "$tmp_debate" && rm -f "${tmp_debate}.bak"
-  else
-    sed -i.bak '/{AGENT_4_NAME}/d' "$tmp_debate" && rm -f "${tmp_debate}.bak"
-  fi
-
-  mv "$tmp_debate" "$DEBATE_FILE"
 
   echo "Created debate file: $DEBATE_FILE"
 fi
@@ -1193,10 +1144,23 @@ elif provider == "gemini":
     env.pop("GEMINI_SESSION_ID", None)
     env.pop("GEMINI_CLI_SESSION", None)
 
-if transport == "stdin":
-    result = subprocess.run(command, input=prompt, capture_output=True, text=True, env=env)
-else:
-    result = subprocess.run(command + [prompt], capture_output=True, text=True, env=env)
+# stdin must be closed for arg transport: some CLIs (codex exec) block forever
+# waiting on a piped-but-silent stdin. The timeout bounds a hung agent turn.
+timeout_seconds = int(os.environ.get("AGENT_DEBATE_TURN_TIMEOUT", "900"))
+try:
+    if transport == "stdin":
+        result = subprocess.run(
+            command, input=prompt, capture_output=True, text=True, env=env,
+            timeout=timeout_seconds,
+        )
+    else:
+        result = subprocess.run(
+            command + [prompt], capture_output=True, text=True, env=env,
+            stdin=subprocess.DEVNULL, timeout=timeout_seconds,
+        )
+except subprocess.TimeoutExpired:
+    print(f"Error: agent command timed out after {timeout_seconds}s", file=sys.stderr)
+    raise SystemExit(124)
 
 if result.returncode != 0:
     if result.stderr:
@@ -1343,7 +1307,24 @@ PY
       return 1
     fi
 
-    echo "$response" > "$DEBATE_FILE"
+    # Reject responses that silently drop earlier contributions: every tag
+    # already in the file must survive, and the dispute log must not shrink.
+    local response_file preservation_report
+    response_file=$(mktemp)
+    printf '%s\n' "$response" > "$response_file"
+    if ! preservation_report=$(python3 "$SCRIPT_DIR/debate_lib.py" verify-preservation "$DEBATE_FILE" "$response_file"); then
+      local raw_output_file
+      raw_output_file="${DEBATE_FILE%.md}.agent${agent_idx}.round${round}.raw.txt"
+      mv "$response_file" "$raw_output_file"
+      echo "  Error: $agent_name response dropped earlier debate content in Round $round:"
+      printf '    %s\n' "$preservation_report"
+      echo "  Rejected output saved: $raw_output_file"
+      state_add_event "turn" "$round" "$agent_idx" "failed" "Dropped earlier content: $preservation_report"
+      state_set_status "failed" "$agent_name dropped earlier content in round $round" "$round"
+      return 1
+    fi
+
+    mv "$response_file" "$DEBATE_FILE"
     echo "  $agent_name finished Round $round."
     state_add_event "turn" "$round" "$agent_idx" "completed" "Applied changes with tag $required_tag"
   else
